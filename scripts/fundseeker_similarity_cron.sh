@@ -41,6 +41,15 @@ BENCHMARK_CODE="${SIMILARITY_BENCHMARK_CODE:-}"
 SKIP_INDEX_WEIGHTS="${SKIP_INDEX_WEIGHTS:-0}"
 SKIP_QUOTES="${SKIP_QUOTES:-0}"
 
+# flock 互斥：避免 cron retry 时跟上一个 pipeline 并发跑批（撞库竞争）
+# cron 19:00 失败后 30s 自动 retry；如果上一个 pipeline 还在跑，新 pipeline 直接放弃
+LOCK=/tmp/fundseeker_similarity.lock
+exec 200>"$LOCK" 2>/dev/null || true
+if ! flock -n 200; then
+  echo "⚠️ 另一个 FundSeeker pipeline 还在跑（lock: $LOCK，本次跳过）"
+  exit 0
+fi
+
 # 构建 pipeline 参数数组
 args=(
   python scripts/fundseeker_similarity.py pipeline
