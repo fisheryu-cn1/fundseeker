@@ -1,0 +1,461 @@
+{% extends "base.html" %}
+{% block title %}{{ product.product_name }} · Fundseeker{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{{ url_for('search') }}">产品检索</a></li>
+    <li class="breadcrumb-item">
+      <a href="{{ url_for('search', institution=product.institution_code) }}">
+        {{ product.institution_code }}
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">
+      {{ product.product_code }}
+    </li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h4 class="mb-1">{{ product.product_name }}</h4>
+    <div class="text-muted small">
+      <code>{{ product.institution_code }}</code> ·
+      <code>{{ product.product_code }}</code> ·
+      采集于 {{ product.collect_date | fmt_date }}
+    </div>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <a class="btn btn-sm btn-outline-primary"
+       href="{{ url_for('similarity_product_view', product_id=product.id) }}">查看相似度归属</a>
+    <span class="badge bg-{{ 'success' if product.status == 'active' else 'secondary' }} fs-6">
+      {{ product.status }}
+    </span>
+  </div>
+</div>
+
+<!-- Basic info card -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header">基本信息</div>
+  <div class="card-body">
+    <dl class="row mb-0 small">
+      <dt class="col-sm-2">产品类型</dt>
+      <dd class="col-sm-4">
+        <span class="badge bg-info text-dark">{{ product.product_type }}</span>
+        {% if product.product_sub_type %}
+          <span class="text-muted ms-1">({{ product.product_sub_type }})</span>
+        {% endif %}
+      </dd>
+
+      <dt class="col-sm-2">风险等级</dt>
+      <dd class="col-sm-4">
+        <span class="badge bg-warning text-dark">{{ product.risk_level }}</span>
+        → <strong>{{ product.risk_level_standard }}</strong>
+      </dd>
+
+      <dt class="col-sm-2">成立日期</dt>
+      <dd class="col-sm-4">{{ product.establish_date | fmt_date }}</dd>
+
+      <dt class="col-sm-2">到期日期</dt>
+      <dd class="col-sm-4">{{ product.maturity_date | fmt_date }}</dd>
+
+      <dt class="col-sm-2">管理人</dt>
+      <dd class="col-sm-4">{{ product.manager or '—' }}</dd>
+
+      <dt class="col-sm-2">托管人</dt>
+      <dd class="col-sm-4">{{ product.custodian or '—' }}</dd>
+
+      <dt class="col-sm-2">投资经理</dt>
+      <dd class="col-sm-4">{{ product.fund_manager or '—' }}</dd>
+
+      <dt class="col-sm-2">业绩基准</dt>
+      <dd class="col-sm-4">{{ product.performance_benchmark or '—' }}</dd>
+
+      <dt class="col-sm-2">登记编码</dt>
+      <dd class="col-sm-4"><code>{{ product.registration_code or '—' }}</code></dd>
+
+      <dt class="col-sm-2">销售代码</dt>
+      <dd class="col-sm-4"><code>{{ product.sales_code or '—' }}</code></dd>
+
+      <dt class="col-sm-2">数据来源</dt>
+      <dd class="col-sm-10 text-break">
+        {% if product.data_source %}
+          <a href="{{ product.data_source }}" target="_blank" rel="noopener">{{ product.data_source }}</a>
+        {% else %}—{% endif %}
+      </dd>
+    </dl>
+  </div>
+</div>
+
+<!-- NAV history -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>净值历史 (共 {{ nav_total }} 条)</span>
+    {% if chart_values %}
+      <span class="text-muted small">最早 {{ chart_labels[0] }} · 最新 {{ chart_labels[-1] }}</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if chart_values %}
+      <div style="height: 260px;">
+        <canvas id="navChart"></canvas>
+      </div>
+      <hr>
+      <div class="table-responsive" style="max-height: 320px; overflow-y: auto;">
+        <table class="table table-sm table-striped mb-0">
+          <thead class="sticky-top bg-white">
+            <tr>
+              <th>净值日期</th>
+              <th class="text-end">单位净值</th>
+              <th class="text-end">累计净值</th>
+              <th class="text-end">日收益率</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in nav_records %}
+              <tr>
+                <td>{{ r.nav_date | fmt_date }}</td>
+                <td class="text-end font-monospace">{{ r.unit_nav | fmt_money }}</td>
+                <td class="text-end font-monospace">{{ r.cumulative_nav | fmt_money }}</td>
+                <td class="text-end font-monospace">{{ r.daily_return | fmt_pct }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted text-center py-4">暂无净值数据</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Holdings -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>持仓信息</span>
+    {% if holding_reports %}
+      <span class="text-muted small">
+        共 {{ holding_reports|length }} 期报告 ·
+        {% if selected_report %}
+          当前显示 {{ selected_report.report_date | fmt_date }}
+          {% if selected_report.report_period %}({{ selected_report.report_period }}){% endif %}
+        {% endif %}
+      </span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if not holding_reports %}
+      <div class="text-muted text-center py-4">
+        暂无持仓数据。
+        可通过 <code>PYTHONPATH=src python scripts/run_holding_collection.py</code> 采集。
+      </div>
+    {% else %}
+      {# Report selector — simple inline list of pill links #}
+      <ul class="nav nav-pills nav-sm mb-3 flex-wrap" id="reportTabs" role="tablist">
+        {% for rep in holding_reports %}
+          <li class="nav-item">
+            <a class="nav-link {% if selected_report and selected_report.id == rep.id %}active{% endif %}"
+               href="{{ url_for('product_detail', product_id=product.id, report_id=rep.id) }}">
+              {{ rep.report_date | fmt_date }}
+              <span class="badge bg-light text-dark ms-1">{{ rep.report_type }}</span>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+
+      {# Summary metrics #}
+      {% if holding_summary %}
+        <div class="row g-2 mb-3">
+          <div class="col-6 col-md-3 col-lg-2">
+            <div class="border rounded p-2 text-center h-100">
+              <div class="text-muted small">前十大持仓</div>
+              <div class="fs-5 font-monospace">{{ holding_summary.top10_weight | fmt_pct }}</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3 col-lg-2">
+            <div class="border rounded p-2 text-center h-100">
+              <div class="text-muted small">股票占比</div>
+              <div class="fs-5 font-monospace">{{ holding_summary.stock_weight | fmt_pct }}</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3 col-lg-2">
+            <div class="border rounded p-2 text-center h-100">
+              <div class="text-muted small">债券占比</div>
+              <div class="fs-5 font-monospace">{{ holding_summary.bond_weight | fmt_pct }}</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3 col-lg-2">
+            <div class="border rounded p-2 text-center h-100">
+              <div class="text-muted small">现金/存款</div>
+              <div class="fs-5 font-monospace">{{ holding_summary.cash_weight | fmt_pct }}</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3 col-lg-2">
+            <div class="border rounded p-2 text-center h-100">
+              <div class="text-muted small">基金占比</div>
+              <div class="fs-5 font-monospace">{{ holding_summary.fund_weight | fmt_pct }}</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3 col-lg-2">
+            <div class="border rounded p-2 text-center h-100">
+              <div class="text-muted small">集中度(HHI)</div>
+              <div class="fs-5 font-monospace">{{ holding_summary.concentration_score | fmt_money }}</div>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
+      {# Asset allocation chart + table #}
+      {% if asset_allocations %}
+        <div class="row g-3 mb-3">
+          <div class="col-md-5">
+            <div style="height: 220px;">
+              <canvas id="allocationChart"></canvas>
+            </div>
+          </div>
+          <div class="col-md-7">
+            <div class="table-responsive">
+              <table class="table table-sm mb-0">
+                <thead><tr>
+                  <th>资产类别</th>
+                  <th class="text-end">占比</th>
+                  <th class="text-end">市值</th>
+                </tr></thead>
+                <tbody>
+                  {% for a in asset_allocations %}
+                    <tr>
+                      <td><span class="badge bg-secondary">{{ a.asset_class | asset_class }}</span></td>
+                      <td class="text-end font-monospace">{{ a.weight | fmt_pct }}</td>
+                      <td class="text-end font-monospace">{{ a.market_value | fmt_money }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
+      {# Holdings detail table #}
+      <h6 class="mt-3">持仓明细
+        <small class="text-muted">共 {{ holdings|length }} 条</small>
+      </h6>
+      <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+        <table class="table table-sm table-striped align-middle mb-0">
+          <thead class="sticky-top bg-white">
+            <tr>
+              <th class="text-end">#</th>
+              <th>代码</th>
+              <th>名称</th>
+              <th>类型</th>
+              <th>市场</th>
+              <th>行业</th>
+              <th class="text-end">占净值</th>
+              <th class="text-end">市值</th>
+              <th class="text-end">数量</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for h in holdings %}
+              {% set sec = security_info_map.get((h.asset_code, h.market or 'UNKNOWN')) if h.asset_code else None %}
+              <tr>
+                <td class="text-end text-muted">{{ h.sort_order or loop.index }}</td>
+                <td><code>{{ h.asset_code or '—' }}</code></td>
+                <td>
+                  {{ h.asset_name }}
+                  {% if h.is_top10 %}
+                    <span class="badge bg-primary ms-1">Top10</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <span class="badge bg-light text-dark">{{ h.asset_type | asset_class }}</span>
+                  {% if h.sub_type %}<span class="text-muted small">{{ h.sub_type }}</span>{% endif %}
+                </td>
+                <td>{{ h.market | holding_market }}</td>
+                <td class="small text-muted">{{ h.industry_name or '—' }}</td>
+                <td class="text-end font-monospace">{{ h.weight | fmt_pct }}</td>
+                <td class="text-end font-monospace">{{ h.market_value | fmt_money }}</td>
+                <td class="text-end font-monospace">{{ h.share_quantity | fmt_money }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="9" class="text-center text-muted py-3">无持仓明细</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {# Style tags (currently 0 rows in the DB) #}
+      {% if style_tags %}
+        <h6 class="mt-3">风格标签</h6>
+        <div class="d-flex flex-wrap gap-2">
+          {% for tag in style_tags %}
+            <span class="badge bg-info text-dark">
+              {{ tag.dimension }}: {{ tag.tag }}
+              {% if tag.score is not none %}({{ tag.score | fmt_pct }}){% endif %}
+            </span>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <div class="text-muted small mt-3">
+        数据来源:
+        {% if selected_report and selected_report.data_source %}
+          <a href="{{ selected_report.data_source }}" target="_blank" rel="noopener">{{ selected_report.data_source }}</a>
+        {% else %}—{% endif %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Returns -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header">收益率</div>
+  <div class="card-body">
+    {% if returns %}
+      <table class="table table-sm mb-0">
+        <thead><tr>
+          <th>周期</th><th>类型</th>
+          <th class="text-end">收益率</th>
+          <th>计算日期</th>
+        </tr></thead>
+        <tbody>
+          {% for r in returns %}
+            <tr>
+              <td>{{ r.return_period }}</td>
+              <td>{{ r.return_type }}</td>
+              <td class="text-end font-monospace">{{ r.return_value | fmt_pct }}</td>
+              <td>{{ r.calc_date | fmt_date }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="text-muted small">暂未采集 (product_return 表当前为空)</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Fees -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header">费率</div>
+  <div class="card-body">
+    {% if fees %}
+      <table class="table table-sm mb-0">
+        <thead><tr>
+          <th>类型</th><th>名称</th>
+          <th class="text-end">费率</th><th>计费方式</th><th>生效日期</th>
+        </tr></thead>
+        <tbody>
+          {% for f in fees %}
+            <tr>
+              <td>{{ f.fee_type }}</td>
+              <td>{{ f.fee_name }}</td>
+              <td class="text-end font-monospace">{{ f.fee_rate | fmt_pct }}</td>
+              <td>{{ f.fee_calc_method or '—' }}</td>
+              <td>{{ f.effective_date | fmt_date }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="text-muted small">暂未采集 (product_fee 表当前为空)</div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Recent collection logs for this institution -->
+<div class="card shadow-sm">
+  <div class="card-header">该机构最近采集记录</div>
+  <div class="card-body p-0">
+    {% if recent_logs %}
+      <table class="table table-sm mb-0">
+        <thead class="table-light"><tr>
+          <th>任务</th><th>开始</th><th>结束</th><th>状态</th>
+          <th class="text-end">记录数</th>
+        </tr></thead>
+        <tbody>
+          {% for log in recent_logs %}
+            <tr>
+              <td>{{ log.job_name }}</td>
+              <td>{{ log.start_time | fmt_dt }}</td>
+              <td>{{ log.end_time | fmt_dt }}</td>
+              <td>
+                <span class="badge bg-{{
+                  'success' if log.status == 'success'
+                  else 'warning' if log.status == 'running'
+                  else 'danger' }}">
+                  {{ log.status }}
+                </span>
+              </td>
+              <td class="text-end font-monospace">{{ log.records_count if log.records_count is not none else '—' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="text-muted small p-3">无记录</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+  // NAV chart
+  const labels = {{ chart_labels | tojson }};
+  const values = {{ chart_values | tojson }};
+  if (labels.length && values.length) {
+    const ctx = document.getElementById('navChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: '单位净值',
+          data: values,
+          borderColor: '#0d6efd',
+          backgroundColor: 'rgba(13,110,253,0.1)',
+          tension: 0.15,
+          pointRadius: 2,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { autoSkip: true, maxTicksLimit: 8 } },
+          y: { beginAtZero: false },
+        },
+      },
+    });
+  }
+
+  // Asset allocation doughnut
+  const allocLabels = {{ asset_allocations | map(attribute='asset_class') | list | tojson }};
+  const allocWeights = {{ asset_allocations | map(attribute='weight') | list | tojson }};
+  if (allocLabels.length) {
+    const palette = ['#0d6efd', '#198754', '#ffc107', '#dc3545', '#6f42c1', '#20c997', '#fd7e14', '#6c757d'];
+    const colors = allocLabels.map((_, i) => palette[i % palette.length]);
+    const ctxA = document.getElementById('allocationChart').getContext('2d');
+    new Chart(ctxA, {
+      type: 'doughnut',
+      data: {
+        labels: allocLabels,
+        datasets: [{
+          data: allocWeights,
+          backgroundColor: colors,
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'right' } },
+      },
+    });
+  }
+</script>
+{% endblock %}

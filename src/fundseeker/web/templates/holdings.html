@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}持仓检索 · Fundseeker{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <!-- Filter sidebar -->
+  <aside class="col-md-3">
+    <form method="get" class="card card-body shadow-sm">
+      <h6 class="card-title mb-3">筛选条件</h6>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">资产代码/名称/行业</label>
+        <input type="text" name="q" class="form-control form-control-sm"
+               value="{{ current.q }}" placeholder="代码、名称或行业关键字">
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">资产类型</label>
+        <select name="asset_type" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for key, label in asset_types %}
+            <option value="{{ key }}" {% if key == current.asset_type %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">市场</label>
+        <select name="market" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for key, label in markets %}
+            <option value="{{ key }}" {% if key == current.market %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">机构</label>
+        <select name="institution" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for code in institutions %}
+            <option value="{{ code }}" {% if code == current.institution %}selected{% endif %}>
+              {{ code }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">报告期 (截止日)</label>
+        <select name="report_date" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for d in report_dates %}
+            <option value="{{ d.isoformat() }}"
+                    {% if d.isoformat() == current.report_date %}selected{% endif %}>
+              {{ d.isoformat() }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">最小占净值 (%)</label>
+        <input type="number" name="min_weight" step="0.01" min="0" max="100"
+               class="form-control form-control-sm" value="{{ current.min_weight }}"
+               placeholder="例如 1.0">
+      </div>
+
+      <div class="form-check mb-3">
+        <input class="form-check-input" type="checkbox" name="top10" value="1"
+               id="top10Check" {% if current.top10 %}checked{% endif %}>
+        <label class="form-check-label small" for="top10Check">仅前十大持仓</label>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm flex-grow-1">查询</button>
+        <a href="{{ url_for('holdings_browse') }}" class="btn btn-outline-secondary btn-sm">重置</a>
+      </div>
+    </form>
+  </aside>
+
+  <!-- Results -->
+  <section class="col-md-9">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h6 class="mb-0">
+        共 <strong>{{ total }}</strong> 条持仓
+        {% if total > 0 %}
+          <span class="text-muted small">(第 {{ page }} / {{ pages }} 页)</span>
+        {% endif %}
+      </h6>
+      <a href="{{ url_for('api_holdings_search', **current) }}"
+         class="btn btn-sm btn-outline-secondary">JSON API</a>
+    </div>
+
+    {% if rows %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>报告期</th>
+              <th>产品</th>
+              <th>机构</th>
+              <th>资产代码</th>
+              <th>资产名称</th>
+              <th>类型</th>
+              <th>市场</th>
+              <th>行业</th>
+              <th class="text-end">占净值</th>
+              <th class="text-end">市值</th>
+              <th class="text-end">数量</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                <td class="text-nowrap small">
+                  {{ r.report_date | fmt_date }}
+                  {% if r.report_period %}
+                    <div class="text-muted small">{{ r.report_period }}</div>
+                  {% endif %}
+                </td>
+                <td class="text-truncate" style="max-width: 18rem;" title="{{ r.product_name }}">
+                  <a href="{{ url_for('product_detail', product_id=r.product_id) }}">
+                    {{ r.product_name }}
+                  </a>
+                  <div class="text-muted small"><code>{{ r.product_code }}</code></div>
+                </td>
+                <td><span class="badge bg-secondary">{{ r.institution_code }}</span></td>
+                <td><code>{{ r.asset_code or '—' }}</code></td>
+                <td>
+                  {{ r.asset_name }}
+                  {% if r.is_top10 %}<span class="badge bg-primary ms-1">Top10</span>{% endif %}
+                </td>
+                <td>
+                  <span class="badge bg-light text-dark">{{ r.asset_type | asset_class }}</span>
+                  {% if r.sub_type %}<div class="text-muted small">{{ r.sub_type }}</div>{% endif %}
+                </td>
+                <td>{{ r.market | holding_market }}</td>
+                <td class="small text-muted text-truncate" style="max-width: 8rem;"
+                    title="{{ r.industry_name or '' }}">{{ r.industry_name or '—' }}</td>
+                <td class="text-end font-monospace">{{ r.weight | fmt_pct }}</td>
+                <td class="text-end font-monospace">{{ r.market_value | fmt_money }}</td>
+                <td class="text-end font-monospace">{{ r.share_quantity | fmt_money }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {# Pagination #}
+      {% if pages > 1 %}
+        <nav>
+          <ul class="pagination pagination-sm justify-content-center">
+            {% set base_args = current %}
+            <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+              <a class="page-link"
+                 href="{{ url_for('holdings_browse', page=page-1, **base_args) }}">上一页</a>
+            </li>
+            {% for p in range(1, pages + 1) %}
+              {% if p == 1 or p == pages or (p >= page - 2 and p <= page + 2) %}
+                <li class="page-item {% if p == page %}active{% endif %}">
+                  <a class="page-link"
+                     href="{{ url_for('holdings_browse', page=p, **base_args) }}">{{ p }}</a>
+                </li>
+              {% elif p == page - 3 or p == page + 3 %}
+                <li class="page-item disabled"><span class="page-link">…</span></li>
+              {% endif %}
+            {% endfor %}
+            <li class="page-item {% if page >= pages %}disabled{% endif %}">
+              <a class="page-link"
+                 href="{{ url_for('holdings_browse', page=page+1, **base_args) }}">下一页</a>
+            </li>
+          </ul>
+        </nav>
+      {% endif %}
+    {% else %}
+      <div class="alert alert-warning">没有匹配的持仓记录。请尝试调整筛选条件，或先运行
+        <code>PYTHONPATH=src python scripts/run_holding_collection.py</code>。
+      </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

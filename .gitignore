@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Local agent / tool configs
+.agents/
+.claude/
+skills-lock.json
+
+# Local environment overrides (real DB URLs, credentials, etc.)
+src/fundseeker/models/database_local.py
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local data files (large or generated)
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+*.csv
+!config/*.csv
+!docs/**/*.csv

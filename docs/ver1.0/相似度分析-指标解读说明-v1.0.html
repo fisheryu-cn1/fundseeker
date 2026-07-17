@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fundseeker 相似度分析指标解读说明</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --text: #1f2933;
+    --text-soft: #52606d;
+    --muted: #7b8794;
+    --border: #e4e7eb;
+    --accent: #2563eb;
+    --accent-soft: #eff4ff;
+    --code-bg: #f3f4f6;
+    --code-text: #b91c1c;
+    --block-bg: #1e293b;
+    --block-text: #e2e8f0;
+    --quote-bg: #eef6ff;
+    --quote-border: #60a5fa;
+    --success: #15803d;
+    --danger: #b91c1c;
+    --warning: #b45309;
+    --th-bg: #f0f4f8;
+    --row-alt: #fafbfc;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  .layout {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 48px 28px 96px;
+  }
+  header.doc-head {
+    margin-bottom: 40px;
+    padding-bottom: 28px;
+    border-bottom: 2px solid var(--border);
+  }
+  header.doc-head h1 {
+    font-size: 2rem;
+    line-height: 1.3;
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+  }
+  .lead {
+    background: var(--quote-bg);
+    border-left: 4px solid var(--quote-border);
+    padding: 14px 20px;
+    border-radius: 0 8px 8px 0;
+    color: var(--text-soft);
+    font-size: 0.95rem;
+    margin: 10px 0;
+  }
+  .lead p { margin: 6px 0; }
+
+  nav.toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 26px;
+    margin-bottom: 44px;
+    box-shadow: 0 1px 3px rgba(15,23,42,0.04);
+  }
+  nav.toc h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 14px;
+    border: none;
+    padding: 0;
+  }
+  nav.toc ol {
+    margin: 0;
+    padding-left: 22px;
+    columns: 2;
+    column-gap: 40px;
+  }
+  nav.toc li { margin: 5px 0; break-inside: avoid; }
+  nav.toc a { color: var(--text-soft); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  section { margin-bottom: 12px; }
+  h2 {
+    font-size: 1.5rem;
+    margin: 56px 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    scroll-margin-top: 24px;
+  }
+  h3 {
+    font-size: 1.18rem;
+    margin: 34px 0 12px;
+    color: var(--text);
+    scroll-margin-top: 24px;
+  }
+  h4 {
+    font-size: 1.02rem;
+    margin: 24px 0 10px;
+    color: var(--text-soft);
+  }
+  h3 code, h4 code, h2 code { color: var(--accent); background: var(--accent-soft); }
+
+  p { margin: 12px 0; }
+  ul, ol { margin: 12px 0; padding-left: 26px; }
+  li { margin: 5px 0; }
+  li > ul { margin: 4px 0; }
+
+  strong { color: var(--text); font-weight: 650; }
+
+  a { color: var(--accent); }
+
+  code {
+    font-family: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, Menlo, monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    color: var(--code-text);
+    padding: 2px 6px;
+    border-radius: 5px;
+  }
+  pre {
+    background: var(--block-bg);
+    color: var(--block-text);
+    padding: 16px 20px;
+    border-radius: 10px;
+    overflow-x: auto;
+    line-height: 1.6;
+    margin: 14px 0;
+  }
+  pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    font-size: 0.86rem;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 18px 0;
+    font-size: 0.92rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--th-bg);
+    font-weight: 650;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even) { background: var(--row-alt); }
+  td code, th code { white-space: nowrap; }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 44px 0;
+  }
+
+  .callout {
+    background: var(--accent-soft);
+    border: 1px solid #d3e0fd;
+    border-radius: 10px;
+    padding: 14px 20px;
+    margin: 18px 0;
+  }
+  .callout strong { color: var(--accent); }
+
+  footer {
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-align: center;
+  }
+
+  @media (max-width: 720px) {
+    .layout { padding: 32px 18px 64px; }
+    nav.toc ol { columns: 1; }
+    header.doc-head h1 { font-size: 1.6rem; }
+    body { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<header class="doc-head">
+  <h1>Fundseeker 相似度分析指标解读说明</h1>
+  <div class="lead">
+    <p><strong>范围：</strong>聚类运行 / 簇详情 / 簇成员净值表现 3 个层级页面中所有展示指标的定义、计算方式与判读经验。</p>
+    <p><strong>计算位置：</strong>除特殊说明外，所有指标均在聚类运行时由 <code>src/fundseeker/similarity/profiling.py</code> 计算并持久化到 <code>similarity_cluster</code> 表；前端仅做读取与展示。簇标签 <code>cluster_label</code> 由 <code>src/fundseeker/similarity/labels.py</code> 生成。</p>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#sec0">三层指标总览</a></li>
+    <li><a href="#sec1">聚类运行级指标</a></li>
+    <li><a href="#sec2">簇级指标</a></li>
+    <li><a href="#sec3">簇内净值表现级指标</a></li>
+    <li><a href="#sec4">常见的判读陷阱</a></li>
+    <li><a href="#sec5">指标全集速查表</a></li>
+  </ol>
+</nav>
+
+<!-- ========== 0 ========== -->
+<section id="sec0">
+  <h2>0. 三层指标总览</h2>
+  <table>
+    <thead>
+      <tr><th>层级</th><th>页面</th><th>指标</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>聚类运行级</td>
+        <td><code>similarity_index.html</code> / <code>similarity_compare.html</code></td>
+        <td>k、产品数、特征维度、Silhouette、Inertia (SSE)</td>
+      </tr>
+      <tr>
+        <td>簇级</td>
+        <td><code>similarity_run.html</code> 簇概览表 + <code>similarity_cluster.html</code> Header</td>
+        <td>簇规模、Top 行业、Top 持仓、机构分布、HHI、Overlap、AC 份额合并占比、代表产品</td>
+      </tr>
+      <tr>
+        <td>簇内净值表现级</td>
+        <td><code>similarity_cluster.html</code> KPI 条 + Top5/Bottom5 + 综合净值曲线</td>
+        <td>平均涨跌幅、标准差、中位数、最大/最小、正收益占比、极差、变异系数、跨度天数、复合基准</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>下面按层级逐一解释。</p>
+</section>
+
+<hr>
+
+<!-- ========== 1 ========== -->
+<section id="sec1">
+  <h2>1. 聚类运行级指标</h2>
+
+  <h3>1.1 <code>k</code></h3>
+  <ul>
+    <li><strong>含义</strong>：聚类数目（簇数），即 K-Means 算法的目标簇数。</li>
+    <li><strong>来源</strong>：<code>similarity_cluster_run.k</code> 列；由聚类 CLI 参数 <code>--k</code> 或自动选择（<code>--k auto</code> 通过 silhouette 搜索）决定。</li>
+    <li><strong>判读</strong>：k 越大，每簇越细，单簇内产品同质性越高但规模越小；k 太小则可能把不同策略混在一起。建议结合 silhouette 综合判断。</li>
+  </ul>
+
+  <h3>1.2 <code>n_products</code>（参与产品数）</h3>
+  <ul>
+    <li><strong>含义</strong>：本次聚类实际参与的产品数量。</li>
+    <li><strong>来源</strong>：<code>similarity_cluster_run.n_products</code>。</li>
+    <li><strong>判读</strong>：反映了当次聚类的输入规模。注意：相同 <code>(institution_code, product_code)</code> 的 A/C 份额产品会先被合并（A/C 份额合并占比 &gt; 0 时），所以 n_products 是「合并后的产品数」，不代表“原本有多少申赎单元”。</li>
+  </ul>
+
+  <h3>1.3 <code>n_features</code>（特征维度）</h3>
+  <ul>
+    <li><strong>含义</strong>：聚类使用的特征维度数。
+      <ul>
+        <li>当 <code>feature_type=asset</code> 时 = 持仓证券代码去重后的总数</li>
+        <li>当 <code>feature_type=industry</code> 时 = 行业类别数</li>
+      </ul>
+    </li>
+    <li><strong>来源</strong>：<code>similarity_cluster_run.n_features</code>。</li>
+    <li><strong>判读</strong>：维度越高说明输入数据越丰富；但 K-Means 在高维空间会受“维度诅咒”影响，silhouette 通常会偏低。</li>
+  </ul>
+
+  <h3>1.4 <code>Silhouette</code>（轮廓系数）</h3>
+  <ul>
+    <li><strong>含义</strong>：衡量簇内紧密度 vs 簇间分离度。</li>
+    <li><strong>计算</strong>：对每个样本 i，<code>s(i) = (b(i) − a(i)) / max(a(i), b(i))</code>，其中 <code>a(i)</code> 是 i 到同簇其他点的平均距离，<code>b(i)</code> 是 i 到最近邻簇所有点的平均距离。簇的 silhouette 是所有样本 s(i) 的均值。</li>
+    <li><strong>取值范围</strong>：<code>-1 ~ 1</code>
+      <ul>
+        <li><code>≈ 1</code>：簇内紧致、簇间分离，<strong>聚类质量好</strong></li>
+        <li><code>≈ 0</code>：样本位于两簇边界</li>
+        <li><code>&lt; 0</code>：样本可能被分到了错误的簇</li>
+      </ul>
+    </li>
+    <li><strong>来源</strong>：<code>similarity_cluster_run.silhouette</code> 列；K-Means 在训练时计算。</li>
+  </ul>
+
+  <h3>1.5 <code>Inertia</code>（簇内平方和 / SSE）</h3>
+  <ul>
+    <li><strong>含义</strong>：所有样本到其所在簇质心的欧氏距离平方和。</li>
+    <li><strong>计算</strong>：<code>Σ_i ‖x_i − centroid[label[i]]‖²</code></li>
+    <li><strong>判读</strong>：
+      <ul>
+        <li>数值越小表示簇内越紧凑</li>
+        <li>单看绝对值意义不大；通常用于<strong>跨 k 对比</strong>：同一个数据集上 Inertia 随 k 单调递减，下降速度变缓的拐点对应「最优 k」</li>
+        <li><code>similarity_run.html</code> 中的「跨运行 Inertia 对比」气泡图就是把多组 (algorithm, k) 的 (k, Inertia) 放在同一张图上找拐点</li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>1.6 <code>report_date</code>（报告期）</h3>
+  <ul>
+    <li><strong>含义</strong>：本次聚类使用的持仓快照日期。</li>
+    <li><strong>业务定义</strong>：报告期 = 最新 <code>product_holding.report_date</code>，<strong>不是</strong>系统当前日期。</li>
+    <li><strong>判读</strong>：报告期距今多久，反映聚类结论的「时效性」。当前 DB 报告期 = 2026-03-31，因为持仓数据每季度发布一次，3.5 个月的滞后属于业务节奏。</li>
+  </ul>
+</section>
+
+<hr>
+
+<!-- ========== 2 ========== -->
+<section id="sec2">
+  <h2>2. 簇级指标（<code>similarity_run.html</code> 概览表 + <code>similarity_cluster.html</code> Header）</h2>
+
+  <h3>2.1 <code>size</code>（簇规模）</h3>
+  <ul>
+    <li><strong>含义</strong>：簇内产品数量（K-Means 实际看到的样本数，A/C 份额合并后的）。</li>
+    <li><strong>判读</strong>：极小簇（如 size &lt; 5）通常意味着产品特征独特、缺乏同伴；过大簇（size &gt; 总样本 × 0.4）往往意味着聚类欠拟合，应增大 k。</li>
+  </ul>
+
+  <h3>2.2 <code>top_industries</code>（Top 行业）</h3>
+  <ul>
+    <li><strong>含义</strong>：簇质心按行业聚合后权重最大的前 N 个行业。</li>
+    <li><strong>计算</strong>（profiling.py:54-76）：</li>
+  </ul>
+  <pre><code>对簇质心每个维度 i：
+  industry_weights[mapping.get(asset_code_i, market_i)] += centroid[i]
+按行业权重降序取前 top_n_industries (=5) 个</code></pre>
+  <ul>
+    <li><strong>判读</strong>：是「簇投资主题」的可读化输出，被 <code>derive_cluster_label()</code>（实现见 <code>src/fundseeker/similarity/labels.py</code>）用于生成簇名（如“电池 + 半导体 + 通信设备”）。权重越大代表簇越偏向该行业。</li>
+  </ul>
+
+  <h3>2.3 <code>cluster_label</code>（簇标签）</h3>
+  <ul>
+    <li><strong>含义</strong>：根据 <code>top_industries</code> 自动生成的可读标签，用于在页面标题、簇概览表中快速识别簇主题。</li>
+    <li><strong>计算</strong>：<code>derive_cluster_label(top_industries)</code>：取权重 ≥ 5% 的行业，去掉「Ⅱ/III/II/I/1/2/3」等后缀，去重后取前 3 个，用「 + 」连接。</li>
+    <li><strong>来源</strong>：<code>similarity_cluster.cluster_label</code>，由 <code>ClusterProfile.build_profiles()</code> 生成并通过 <code>save_cluster_run()</code> 持久化。</li>
+    <li><strong>判读</strong>：如「通信设备 + 半导体 + 元件」「白酒 + 白色家电 + 摩托车及其他」。web 层优先读取持久化值，缺失时回退到路由层重新派生。</li>
+  </ul>
+
+  <h3>2.4 <code>top_holdings</code>（Top 持仓）</h3>
+  <ul>
+    <li><strong>含义</strong>：簇质心中权重最大的前 N 个资产（默认 10）。</li>
+    <li><strong>来源</strong>：当 <code>feature_type=asset</code> 时直接取质心 top-10；为 <code>industry</code> 时取行业 top-10 并标记为 <code>asset:行业名</code>。</li>
+    <li><strong>判读</strong>：可读出“该簇在重仓哪些具体股票/债券”。</li>
+  </ul>
+
+  <h3>2.5 <code>institution_distribution</code>（机构分布）</h3>
+  <ul>
+    <li><strong>含义</strong>：<code>{institution_code: 该机构在簇内的产品数}</code>。</li>
+    <li><strong>判读</strong>：单家机构占比 &gt; 50% 提示「产品线内部策略趋同」；多家机构均匀分布提示「跨机构共同策略」。</li>
+  </ul>
+
+  <h3>2.6 平均 HHI（<strong>Herfindahl-Hirschman Index</strong>）</h3>
+  <ul>
+    <li><strong>定义</strong>（features.py:210-212）：</li>
+  </ul>
+  <pre><code>HHI(p) = Σ_i w_i²    # p 的所有持仓权重平方和
+avg_hhi = mean([HHI(p) for p in 簇内产品])</code></pre>
+  <ul>
+    <li><strong>取值范围</strong>：1/N（完全分散）~ 1（全部压在一只持仓上）</li>
+    <li><strong>为什么用 <code>raw_weights</code> 而非归一化向量</strong>：归一化后抹掉了绝对规模，“重仓茅台 30%” 和 “重仓茅台 5%” 形状一样但集中度天差地别。用原始权重才能反映真实集中度。</li>
+    <li><strong>判读经验值</strong>：</li>
+  </ul>
+  <table>
+    <thead><tr><th>avg_hhi</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>&lt; 0.05</code></td><td>极度分散（典型指数基金）</td></tr>
+      <tr><td><code>0.05 ~ 0.15</code></td><td>分散持仓</td></tr>
+      <tr><td><code>0.15 ~ 0.30</code></td><td>中度集中（有重点品种）</td></tr>
+      <tr><td><code>&gt; 0.30</code></td><td>高度集中（重仓少数）</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2.7 平均 Overlap（<strong>Overlap Coefficient</strong>）</h3>
+  <ul>
+    <li><strong>定义</strong>（profiling.py:34-51）：</li>
+  </ul>
+  <pre><code>overlap(p, q) = Σ_k min(w_p,k, w_q,k)
+cluster_overlap = 所有产品对 overlap 的均值</code></pre>
+  <ul>
+    <li><strong>两种语义</strong>（UI 同时展示两列）：</li>
+  </ul>
+  <table>
+    <thead><tr><th>字段</th><th>输入</th><th>语义</th></tr></thead>
+    <tbody>
+      <tr><td><code>avg_overlap</code>（归一化）</td><td>L2 归一化后的向量</td><td>几何形状相似度 —— 反映聚类算法“看到”的相似性</td></tr>
+      <tr><td><code>avg_overlap_raw</code>（原始权重）</td><td>原始权重向量</td><td>业务直觉的“共同持仓” —— 反映真实仓位重合度</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><strong>取值范围</strong>：0 ~ 1</li>
+    <li><strong>判读经验值</strong>：</li>
+  </ul>
+  <table>
+    <thead><tr><th>avg_overlap</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>&lt; 0.10</code></td><td>簇内产品持仓几乎不重合</td></tr>
+      <tr><td><code>0.10 ~ 0.30</code></td><td>部分重合（有共同主战场）</td></tr>
+      <tr><td><code>0.30 ~ 0.60</code></td><td>高度重合（同策略复制）</td></tr>
+      <tr><td><code>&gt; 0.60</code></td><td>几乎雷同（同模板发行）</td></tr>
+    </tbody>
+  </table>
+
+  <h3>2.8 AC 份额合并占比（<code>ac_share_dominance_ratio</code>）</h3>
+  <ul>
+    <li><strong>背景</strong>：A/C 份额是同一只母基金的费率差异化子份额（名称如「基金A」「基金C」），持仓完全相同。聚类前需要先合并，否则同一策略会被误拆成多个簇。</li>
+    <li><strong>合并规则</strong>（features.py:81-142）：按 <code>(institution_code, 基础名)</code> 分组，组内<strong>至少 2 个</strong>带显式份额后缀（A/B/C/E/H 等）时才合并；保留 holding 数量最多的那个为「母份额」。</li>
+    <li><strong>指标计算</strong>（profiling.py:165-178）：</li>
+  </ul>
+  <pre><code>total_merged = Σ 簇内每个 kept product 在 merge_map 中关联的 product_id 数（含自身）
+ratio = (total_merged − size) / size</code></pre>
+  <ul>
+    <li><strong>判读</strong>：</li>
+  </ul>
+  <table>
+    <thead><tr><th>ratio</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>= 0</code></td><td>簇内无 A/C 合并；所有产品都“独立”</td></tr>
+      <tr><td><code>&gt; 0</code></td><td>部分产品来自 A/C 份额拆分；值越大合并越密集</td></tr>
+      <tr><td><code>≥ 1</code></td><td>平均每个 kept product 至少带 1 个兄弟份额</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <strong>业务意义</strong>：当 ratio &gt; 0 时，UI 显示的“簇规模 100”实际代表 <code>100 × (1 + ratio)</code> 份独立申赎单元，但因投资策略完全相同被折算成 100 个样本参与聚类。这是为了避免同一发行人按费率发行多份“假不同”产品被分散到不同簇。
+  </div>
+
+  <h3>2.9 <code>representative_products</code> / <code>representative_codes</code> / <code>representative_names</code>（代表产品）</h3>
+  <ul>
+    <li><strong>含义</strong>：簇内<strong>最接近质心</strong>的最多 5 个产品（<code>max_representatives=5</code>）。</li>
+    <li><strong>计算</strong>（profiling.py:181-186）：</li>
+  </ul>
+  <pre><code>dist_to_center = ‖x_i − centroid‖₂
+rep = argsort(dist_to_center)[:5]</code></pre>
+  <ul>
+    <li><strong>判读</strong>：代表产品是该簇的“标准动作”，可以作为深入查看某个簇的入口。</li>
+  </ul>
+
+  <h3>2.10 三者协同判读</h3>
+  <p>HHI、Overlap、AC 合并占比一起回答「簇内成员长得有多像」：</p>
+  <table>
+    <thead><tr><th>指标</th><th>问的是</th><th>数值高意味着</th></tr></thead>
+    <tbody>
+      <tr><td>HHI</td><td>单只产品<strong>自身</strong>的持仓有多集中</td><td>押注型产品（主题/行业基金）</td></tr>
+      <tr><td>Overlap</td><td>簇内成员<strong>两两之间</strong>的持仓重合度</td><td>同策略发行 / 复制型产品群</td></tr>
+      <tr><td>AC 份额合并占比</td><td>簇内有多少产品来自同一份母基金的份额拆分</td><td>同发行人、仅按费率发行的“假不同”产品</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <strong>例</strong>：<code>HHI=0.32, avg_overlap=0.45, AC=0.20</code> → “重仓型策略组，簇内产品持仓相似度高，约 20% 的样本来自同一只母基金的 A/C 份额拆分。”
+  </div>
+</section>
+
+<hr>
+
+<!-- ========== 3 ========== -->
+<section id="sec3">
+  <h2>3. 簇内净值表现级指标（<code>similarity_cluster.html</code>）</h2>
+  <p>这部分所有指标都基于「<strong>簇内每个产品的区间涨跌幅</strong>」（<code>period_change_pct</code>），按产品的<strong>逻辑产品键</strong> <code>(institution_code, product_code)</code> 聚合所有兄弟 <code>product_id</code> 的 <code>product_nav</code> 记录计算。窗口为 <code>[today-1-days, today-1]</code>（市场行情 1 天滞后）。</p>
+
+  <h3>3.1 <code>period_change_pct</code>（区间涨跌幅）</h3>
+  <ul><li><strong>定义</strong>：</li></ul>
+  <pre><code>period_change_pct(p) = (latest_nav(p) − earliest_nav(p)) / earliest_nav(p)</code></pre>
+  <p>其中 <code>earliest_nav</code> 是产品在窗口内<strong>最早</strong>日期的 NAV，<code>latest_nav</code> 是窗口内<strong>最晚</strong>日期的 NAV。</p>
+  <ul>
+    <li><strong>判读</strong>：
+      <ul>
+        <li>单条产品必须有 ≥ 2 条落在窗口内的 NAV 才有值；只有 1 条的产品返回 <code>None</code>，被排除在 Top5/Bottom5 之外。</li>
+        <li>当数据库 NAV 不足时（如采集稀疏期），统计指标会降级或为空，UI 显示 <code>—</code>。</li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>3.2 <code>span_days</code>（数据跨度）</h3>
+  <ul>
+    <li><strong>定义</strong>：<code>latest_nav_date − earliest_nav_date</code>（按天）。</li>
+    <li><strong>判读</strong>：与“行情窗口”不一定相等 —— <code>span_days</code> 反映的是实际取到的最早-最晚 NAV 日期差。如果数据库 NAV 不足，可能短于用户选定的 days。</li>
+  </ul>
+
+  <h3>3.3 KPI 条卡指标</h3>
+
+  <h4>3.3.1 <code>平均涨跌幅</code>（<code>dispersion.mean_change</code>）</h4>
+  <ul>
+    <li><strong>定义</strong>：簇内所有产品的 <code>period_change_pct</code> 的算术平均。</li>
+    <li><strong>判读</strong>：
+      <ul>
+        <li>正数：簇内整体跑赢市场</li>
+        <li>负数：簇内整体跑输</li>
+        <li>颜色：正 → <code>text-success</code>，负 → <code>text-danger</code></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h4>3.3.2 <code>标准差 σ</code>（<code>dispersion.std_change</code>）</h4>
+  <ul>
+    <li><strong>定义</strong>：numpy <code>std(ddof=1)</code>。</li>
+    <li><strong>判读</strong>：反映簇内成员表现的离散度。σ 大说明簇内产品走势分化严重；σ 小说明行为一致。</li>
+  </ul>
+
+  <h4>3.3.3 <code>中位数涨跌幅</code>（<code>dispersion.median_change</code>）</h4>
+  <ul>
+    <li><strong>定义</strong>：numpy <code>median</code>。</li>
+    <li><strong>判读</strong>：相比平均数对极端值更稳健。当平均与中位数差异大时，提示存在拉偏的极端产品。</li>
+  </ul>
+
+  <h4>3.3.4 <code>最大 / 最小</code>（<code>dispersion.max_change</code> / <code>min_change</code>）</h4>
+  <ul>
+    <li><strong>定义</strong>：簇内产品的极值涨跌幅。</li>
+    <li><strong>判读</strong>：最大 - 最小 = 极差（也是后面 3.3.7 的指标）。</li>
+  </ul>
+
+  <h4>3.3.5 <code>正收益占比</code>（<code>dispersion.positive_share</code>）</h4>
+  <ul>
+    <li><strong>定义</strong>：<code>(arr &gt; 0).mean()</code>，即 <code>period_change_pct &gt; 0</code> 的产品占比。</li>
+    <li><strong>判读</strong>：
+      <ul>
+        <li><code>&lt; 30%</code> 或 <code>&gt; 70%</code>：簇内走势高度同向</li>
+        <li><code>40% ~ 60%</code>：簇内走势分化、对冲</li>
+      </ul>
+    </li>
+  </ul>
+
+  <h4>3.3.6 极差（<code>dispersion.range_pct</code>）</h4>
+  <ul>
+    <li><strong>定义</strong>：<code>max_change − min_change</code>（百分点）。</li>
+    <li><strong>判读</strong>：单个数字概括簇内“最佳 vs 最差”的差距。</li>
+  </ul>
+
+  <h4>3.3.7 变异系数 CV 与一致性徽章</h4>
+  <ul>
+    <li><strong>定义</strong>：<code>cv = std / |mean|</code>（用绝对值避免符号翻转）。</li>
+    <li><strong>判读</strong>：</li>
+  </ul>
+  <table>
+    <thead><tr><th>CV 范围</th><th>徽章</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>&lt; 0.5</code></td><td>一致 (bg-success)</td><td>簇内表现高度一致</td></tr>
+      <tr><td><code>0.5 ~ 1.5</code></td><td>分化 (bg-warning)</td><td>表现有差异但仍在同向</td></tr>
+      <tr><td><code>≥ 1.5</code></td><td>高分化 (bg-danger)</td><td>簇内表现严重分化，可能不适合作为单一投资主题</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3.4 Top 5 / Bottom 5 表</h3>
+  <p>每张表的列：</p>
+  <table>
+    <thead><tr><th>列</th><th>来源</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td><code>#</code></td><td><code>loop.index</code></td><td>1-5 名</td></tr>
+      <tr><td>代码 / 名称</td><td><code>r.product_code</code> / <code>r.product_name</code></td><td>产品标识</td></tr>
+      <tr><td>机构</td><td><code>r.institution_code</code></td><td>发行机构徽章</td></tr>
+      <tr><td>区间涨跌幅</td><td><code>r.period_change_pct</code></td><td>该产品的涨跌幅，符号着色</td></tr>
+      <tr><td>数据区间</td><td><code>earliest_nav_date ~ latest_nav_date · span_days 天</code></td><td>该产品的 NAV 数据实际跨度（不一定等于 days）</td></tr>
+      <tr><td>持仓市值</td><td><code>r.holding_market_value</code></td><td>该产品在最近持仓报告日的持仓市值</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><strong>空态</strong>：「无足够数据（产品需要 ≥ 2 条 NAV 记录才能计算涨跌幅）」</li>
+  </ul>
+
+  <h3>3.5 综合净值曲线与基准对比</h3>
+  <p><strong>绘制对象</strong>：单 canvas <code>chartClusterMarket</code>，line chart，包含两类 series：</p>
+  <table>
+    <thead><tr><th>Series 类型</th><th>视觉</th><th>数据</th></tr></thead>
+    <tbody>
+      <tr><td>簇综合净值</td><td>实线 / 加粗 / 颜色 <code>colors[3]</code></td><td><code>cluster_composite_value_series</code> 的输出，已重新基准化（起点=100）</td></tr>
+      <tr><td>市场指数</td><td>虚线 (<code>borderDash: [4,3]</code>) / 颜色 <code>colors[(i+1) % colors.length]</code></td><td><code>cluster_market_overlay</code> 选出的指数，按区域自动选择</td></tr>
+    </tbody>
+  </table>
+  <p><strong>综合净值的构造</strong>（queries.py:2015-2146）：</p>
+  <ol>
+    <li>收集簇内所有产品的逻辑产品键 <code>(inst, code)</code></li>
+    <li>查出每个键的所有兄弟 <code>product_id</code></li>
+    <li>窗口 <code>[end_date − days, end_date]</code> 内拉取所有 NAV</li>
+    <li>每个逻辑产品一个 <code>series[date → value]</code>（同日期去重）</li>
+    <li>按日期聚合：<code>by_date[d] = [每个成员的 NAV]</code>，等权平均</li>
+    <li><strong>锚点选择</strong>：取首个 <strong>≥ 80% 成员覆盖</strong> 的日期作为 100；之前的不全日期保留但意义不大</li>
+    <li>重新基准化：<code>close = raw / anchor_value * 100</code></li>
+  </ol>
+  <p><strong>期间涨跌口径</strong>：<code>cluster_run_period_changes</code> / <code>cluster_composite_period_change</code> 以锚点日期（<code>start_value = 100</code>）为起点、窗口末日为终点计算 <code>(end_value / 100 - 1)</code>，而不是用 <code>series[0]</code>。这样与「平均涨跌幅 / 中位数涨跌幅」口径可比，同时避免早期成员覆盖不足带来的抽样偏差。</p>
+  <p><strong>判读</strong>：</p>
+  <ul>
+    <li>综合净值曲线向上 = 簇内整体净值增长</li>
+    <li>与下方市场指数虚线对比：综合净值斜率 &gt; 指数 → 跑赢市场；反之跑输</li>
+    <li>整体形态特征可反映“该簇策略的弹性”：波动大说明弹性大、波动小说明稳健</li>
+  </ul>
+  <p><strong>判读常见现象</strong>：</p>
+  <ul>
+    <li>综合净值在窗口起点显著高于 100 → 数据稀疏，80% 覆盖的锚点被推迟；属于采集问题</li>
+    <li>综合净值与指数几乎平行 → 簇内持仓与指数高度重合（典型被动型 / 大盘型产品）</li>
+  </ul>
+
+  <h3>3.6 持仓分布（<code>market_breakdown</code>）</h3>
+  <ul>
+    <li><strong>含义</strong>：簇内所有持仓按市场区域（<code>domestic/hk/us/commodity</code>）累加权重。</li>
+    <li><strong>判读</strong>：决定 <code>cluster_market_overlay</code> 选哪些指数对比。例：簇内全部为 A 股，则 overlay 只取 <code>domestic</code> bundle（沪深300 + 上证 + 创业板）。</li>
+  </ul>
+</section>
+
+<hr>
+
+<!-- ========== 4 ========== -->
+<section id="sec4">
+  <h2>4. 几个常见的判读陷阱</h2>
+  <ol>
+    <li><strong>报告期 vs 系统日期</strong>：报告期（持仓快照日期）是历史时点，系统日期是查询当下。报告期不更新不代表页面有问题，是上游采集节奏决定。</li>
+    <li><strong>窗口基准日 vs 系统日期</strong>：图表右端 = <code>today - 1</code>，因为市场和产品净值都滞后 1 个交易日。如果你看 7/15 的页面，看到的是 <code>[6/15, 7/14]</code> 的窗口。</li>
+    <li><strong>NAV 数据稀疏</strong>：若产品在窗口内只有 1 条 NAV，则 <code>period_change_pct = None</code>，不进入排名；如果整个簇的所有产品都这样，KPI 条和 Top5/Bottom5 都隐藏。</li>
+    <li><strong>逻辑产品 vs 每日快照</strong>：<code>product_info</code> 是每日快照，同一逻辑产品 <code>(inst, code)</code> 对应多个 <code>product_id</code>。所有 NAV 统计都按逻辑产品键聚合所有兄弟快照的 NAV，而不是仅看当天那一条。</li>
+    <li><strong>HHI 与 Overlap 数值不可跨簇直接对比绝对大小</strong>：HHI/Overlap 的具体值依赖产品组合本身，只有当簇大小相近、特征维度相同时才有比较意义。要判断“这个簇是不是更集中”，应看它在自己簇内的相对位置。</li>
+    <li><strong>Silhouette 解读时要分算法</strong>：K-Means 的 silhouette 与 K-Means-asset、K-Means-industry 算法不能直接互相比较，因为特征空间不同。</li>
+  </ol>
+</section>
+
+<hr>
+
+<!-- ========== 5 ========== -->
+<section id="sec5">
+  <h2>5. 指标全集速查表</h2>
+  <table>
+    <thead>
+      <tr><th>指标</th><th>类型</th><th>取值范围</th><th>计算位置</th><th>主要展示页</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>k</td><td>整数</td><td>≥ 2</td><td>聚类输入参数</td><td>run 详情</td></tr>
+      <tr><td>n_products</td><td>整数</td><td>≥ 0</td><td>聚类输入样本数</td><td>run 详情 / 列表</td></tr>
+      <tr><td>n_features</td><td>整数</td><td>≥ 1</td><td>特征矩阵维度</td><td>run 详情</td></tr>
+      <tr><td>silhouette</td><td>浮点</td><td>-1 ~ 1</td><td>K-Means 训练</td><td>run 详情 / 列表</td></tr>
+      <tr><td>inertia (SSE)</td><td>浮点</td><td>≥ 0</td><td>K-Means 训练</td><td>run 详情</td></tr>
+      <tr><td>report_date</td><td>date</td><td>—</td><td><code>product_holding.max(report_date)</code></td><td>所有 run 页</td></tr>
+      <tr><td>size</td><td>整数</td><td>≥ 1</td><td>K-Means label 数</td><td>run 概览 / 簇 header</td></tr>
+      <tr><td>top_industries</td><td>list</td><td>—</td><td>簇质心按行业聚合</td><td>run 概览 / 簇 header</td></tr>
+      <tr><td>top_holdings</td><td>list</td><td>—</td><td>簇质心 top-10</td><td>run 概览 / 簇 header</td></tr>
+      <tr><td>institution_distribution</td><td>dict</td><td>—</td><td><code>Counter(institution_codes)</code></td><td>簇 header</td></tr>
+      <tr><td>avg_hhi</td><td>浮点</td><td>1/N ~ 1</td><td><code>mean(Σ w²)</code> on raw_weights</td><td>run 概览 / 簇 header</td></tr>
+      <tr><td>avg_overlap (归一化)</td><td>浮点</td><td>0 ~ 1</td><td><code>_overlap_pairwise(X_c)</code></td><td>run 概览 / 簇 header</td></tr>
+      <tr><td>avg_overlap_raw (原始)</td><td>浮点</td><td>0 ~ 1</td><td><code>_overlap_pairwise(raw_c)</code></td><td>run 概览 / 簇 header</td></tr>
+      <tr><td>ac_share_dominance_ratio</td><td>浮点</td><td>≥ 0</td><td><code>(total_merged − size) / size</code></td><td>run 概览</td></tr>
+      <tr><td>representative_*</td><td>list</td><td>≤ 5</td><td>最近质心的 top-5</td><td>簇 header</td></tr>
+      <tr><td>cluster_label</td><td>str</td><td>—</td><td><code>derive_cluster_label(top_industries)</code></td><td>run 概览 / 簇 header</td></tr>
+      <tr><td>period_change_pct</td><td>浮点</td><td>可正可负</td><td><code>(latest − earliest) / earliest</code></td><td>簇 KPI / Top5</td></tr>
+      <tr><td>cluster_composite_change_pct</td><td>浮点</td><td>可正可负</td><td>等权合成净值从锚点（100）到期末的变化</td><td>run 概览「期间涨跌」</td></tr>
+      <tr><td>span_days</td><td>整数</td><td>≥ 0</td><td><code>latest − earliest</code></td><td>簇 KPI</td></tr>
+      <tr><td>nav_record_count</td><td>整数</td><td>≥ 0</td><td>窗口内 NAV 行数</td><td>簇 KPI</td></tr>
+      <tr><td>dispersion.mean_change</td><td>浮点</td><td>%</td><td><code>mean(period_change_pct)</code></td><td>簇 KPI</td></tr>
+      <tr><td>dispersion.std_change</td><td>浮点</td><td>%</td><td>numpy std(ddof=1)</td><td>簇 KPI</td></tr>
+      <tr><td>dispersion.median_change</td><td>浮点</td><td>%</td><td>numpy median</td><td>簇 KPI</td></tr>
+      <tr><td>dispersion.max/min_change</td><td>浮点</td><td>%</td><td>max / min</td><td>簇 KPI</td></tr>
+      <tr><td>dispersion.positive_share</td><td>浮点</td><td>0 ~ 1</td><td><code>(arr &gt; 0).mean()</code></td><td>簇 KPI</td></tr>
+      <tr><td>dispersion.range_pct</td><td>浮点</td><td>%</td><td><code>max − min</code></td><td>簇 KPI</td></tr>
+      <tr><td>dispersion.coefficient_of_variation</td><td>浮点</td><td>≥ 0</td><td><code>std / |mean|</code></td><td>簇 KPI</td></tr>
+      <tr><td>holding_market_value</td><td>浮点</td><td>元</td><td>该产品在最近持仓报告日的持仓市值</td><td>Top5 / Bottom5</td></tr>
+      <tr><td>holding_weight</td><td>浮点</td><td>0 ~ 1</td><td><code>Σ holding.weight</code></td><td>Top5 / Bottom5</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  Fundseeker · 相似度分析指标解读说明 · 由 Markdown 转换生成
+</footer>
+
+</div>
+</body>
+</html>

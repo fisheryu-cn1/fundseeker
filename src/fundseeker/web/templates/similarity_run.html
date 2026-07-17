@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+{% block title %}相似度运行 #{{ detail.run.cluster_run_id }} · Fundseeker{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{{ url_for('similarity_index') }}">相似度分析</a></li>
+    <li class="breadcrumb-item active" aria-current="page">
+      {{ detail.run.algorithm }} · k={{ detail.run.k }} · {{ detail.run.report_date | fmt_date }}
+    </li>
+  </ol>
+</nav>
+
+<h4 class="mb-3 d-flex justify-content-between align-items-center">
+  <span>聚类运行 #{{ detail.run.cluster_run_id }}</span>
+  <span>
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{{ url_for('api_similarity_run', cluster_run_id=detail.run.cluster_run_id) }}">JSON API</a>
+  </span>
+</h4>
+
+<!-- KPI strip -->
+<div class="row g-2 mb-3">
+  <div class="col-md-2 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">k</div>
+        <div class="display-6 fw-semibold">{{ detail.run.k }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">参与产品数</div>
+        <div class="display-6 fw-semibold">{{ detail.run.n_products or '—' }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-2 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">特征维度</div>
+        <div class="display-6 fw-semibold">{{ detail.run.n_features or '—' }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">Silhouette</div>
+        <div class="display-6 fw-semibold font-monospace">
+          {{ "%.4f"|format(detail.run.silhouette) if detail.run.silhouette is not none else '—' }}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">Inertia (SSE)</div>
+        <div class="display-6 fw-semibold font-monospace">
+          {{ "%.2f"|format(detail.run.inertia) if detail.run.inertia is not none else '—' }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="text-muted small mb-3">
+  算法: <code>{{ detail.run.algorithm }}</code>
+  · 产品类型过滤: {{ detail.run.product_type_filter or '全部' }}
+  · 报告期: {{ detail.run.report_date | fmt_date }}
+  · 创建于 {{ detail.run.created_at | fmt_dt }}
+</div>
+
+<!-- Charts row 1 -->
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header py-2">
+        <span class="fw-semibold small">簇规模分布</span>
+        <span class="text-muted small ms-2">x = 簇编号 · y = 产品数</span>
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartClusterSizes" style="max-height: 280px;"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header py-2">
+        <span class="fw-semibold small">跨运行 Inertia 对比</span>
+        <span class="text-muted small ms-2">所有已保存运行</span>
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartInertia" style="max-height: 280px;"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Cluster summary table -->
+<div class="card shadow-sm mb-3">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">簇概览 ({{ clusters_view | length }} 个簇 · 共 {{ detail.members | length }} 个产品)</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>簇</th>
+          <th class="text-end">规模</th>
+          <th class="text-end">期间涨跌</th>
+          <th>Top 行业</th>
+          <th>Top 持仓 (代码 + 名称)</th>
+          <th class="text-end">HHI</th>
+          <th class="text-end">Overlap (归一化)</th>
+          <th class="text-end">Overlap (原始)</th>
+          <th class="text-end">AC 份额合并占比</th>
+          <th class="text-end">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clusters_view %}
+          <tr>
+            <td>
+              <a href="{{ url_for('similarity_cluster_detail', cluster_run_id=detail.run.cluster_run_id, cluster_id=c.cluster_id) }}"
+                 class="text-decoration-none fw-semibold">
+                {{ c.cluster_label_short }}
+              </a>
+              <small class="text-muted ms-1">#{{ c.cluster_id }}</small>
+            </td>
+            <td class="text-end font-monospace">{{ c.size }}</td>
+            <td class="text-end font-monospace">
+              {% set change = cluster_period_changes.get(c.cluster_id) %}
+              {% if change and change.change_pct is not none %}
+                {% set change_pct = change.change_pct %}
+                <span class="{{ 'text-danger' if change_pct < 0 else 'text-success' if change_pct > 0 else '' }}">
+                  {{ change_pct | fmt_pct }}
+                </span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% for ind in (c.top_industries or [])[:3] %}
+                <span class="badge bg-info text-dark me-1">
+                  {{ ind.industry }} · {{ "%.2f"|format(ind.weight) }}
+                </span>
+              {% endfor %}
+              {% if not c.top_industries %}
+                <span class="text-muted small">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% for h in (c.top_holdings or [])[:3] %}
+                <span class="d-inline-block me-2 mb-1">
+                  <code class="small">{{ h.asset_code }}</code>
+                  <span class="small text-muted">{{ h.asset_name or '—' }}</span>
+                </span>
+              {% endfor %}
+              {% if not c.top_holdings %}
+                <span class="text-muted small">—</span>
+              {% endif %}
+            </td>
+            <td class="text-end font-monospace">{{ "%.4f"|format(c.avg_hhi) if c.avg_hhi is not none else '—' }}</td>
+            <td class="text-end font-monospace">{{ "%.3f"|format(c.avg_overlap) if c.avg_overlap is not none else '—' }}</td>
+            <td class="text-end font-monospace">{{ "%.3f"|format(c.avg_overlap_raw) if c.avg_overlap_raw is not none else '—' }}</td>
+            <td class="text-end font-monospace">
+              {% if c.ac_share_dominance_ratio is not none and c.ac_share_dominance_ratio > 0 %}
+                <span class="badge bg-warning text-dark">{{ "%.2f"|format(c.ac_share_dominance_ratio) }}</span>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary"
+                 href="{{ url_for('similarity_cluster_detail', cluster_run_id=detail.run.cluster_run_id, cluster_id=c.cluster_id) }}">
+                 详情 →
+              </a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Industry aggregation -->
+{% if industry_rows %}
+  <div class="card shadow-sm mb-3">
+    <div class="card-header py-2">
+      <span class="fw-semibold small">簇 × 行业 矩阵</span>
+      <span class="text-muted small ms-2">聚合自所有簇的 top_industries</span>
+    </div>
+    <div class="table-responsive" style="max-height: 320px;">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>行业</th>
+            {% for c in detail.clusters %}
+              <th class="text-end">簇 {{ c.cluster_id }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% set industry_set = industry_rows | map(attribute='industry') | unique | list %}
+          {% for ind in industry_set[:20] %}
+            <tr>
+              <td><strong>{{ ind }}</strong></td>
+              {% for c in detail.clusters %}
+                {% set rows_for_ind = industry_rows | selectattr('industry', 'equalto', ind) | selectattr('cluster_id', 'equalto', c.cluster_id) | list %}
+                <td class="text-end font-monospace small">
+                  {% if rows_for_ind %}
+                    {{ "%.3f"|format(rows_for_ind[0].weight) }}
+                  {% else %}
+                    <span class="text-muted">·</span>
+                  {% endif %}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='charts.js') }}"></script>
+<script>
+(function () {
+  const colors = FundSeekerCharts.COLORS;
+
+  // Cluster sizes bar chart.
+  const clusters = {{ detail.clusters | tojson }};
+  const clusterLabels = {{ clusters_view | tojson }};
+  const labelById = {};
+  clusterLabels.forEach(c => { labelById[c.cluster_id] = c.cluster_label_short || ('簇 #' + c.cluster_id); });
+  const sizeCtx = document.getElementById('chartClusterSizes');
+  if (sizeCtx && clusters.length) {
+    new Chart(sizeCtx, {
+      type: 'bar',
+      data: {
+        labels: clusters.map(c => labelById[c.cluster_id] || '簇 #' + c.cluster_id),
+        datasets: [{
+          label: '产品数',
+          data: clusters.map(c => c.size),
+          backgroundColor: clusters.map((_, i) => colors[i % colors.length] + 'aa'),
+          borderColor: clusters.map((_, i) => colors[i % colors.length]),
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: items => {
+                const c = clusters[items[0].dataIndex];
+                return labelById[c.cluster_id] || '簇 #' + c.cluster_id;
+              },
+              label: c => c.raw + ' 个产品',
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { font: { size: 10 }, maxRotation: 30, minRotation: 0 } },
+          y: { beginAtZero: true, ticks: { font: { size: 10 } } },
+        },
+      },
+    });
+  }
+
+  // Inertia comparison across all persisted runs.
+  const allRuns = {{ all_runs | tojson }};
+  const inertiaCtx = document.getElementById('chartInertia');
+  if (inertiaCtx && allRuns.length) {
+    const byAlgo = {};
+    allRuns.forEach(r => {
+      if (r.inertia === null) return;
+      (byAlgo[r.algorithm] = byAlgo[r.algorithm] || []).push({
+        x: r.k,
+        y: r.inertia,
+        r: Math.max(4, Math.min(20, (r.n_products || 100) / 40)),
+        report_date: r.report_date,
+      });
+    });
+    const datasets = Object.keys(byAlgo).map((algo, i) => ({
+      label: algo,
+      data: byAlgo[algo],
+      backgroundColor: colors[i % colors.length] + '99',
+      borderColor: colors[i % colors.length],
+      borderWidth: 1,
+    }));
+    new Chart(inertiaCtx, {
+      type: 'bubble',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: c => c.dataset.label + ': k=' + c.raw.x + ', inertia=' + c.raw.y.toFixed(2) + ' (' + c.raw.report_date + ')',
+            },
+          },
+        },
+        scales: {
+          x: { title: { display: true, text: 'k' }, ticks: { stepSize: 1 } },
+          y: { title: { display: true, text: 'Inertia (SSE)' }, beginAtZero: false },
+        },
+      },
+    });
+  }
+})();
+</script>
+{% endblock %}

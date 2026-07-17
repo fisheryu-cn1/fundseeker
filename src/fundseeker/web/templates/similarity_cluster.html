@@ -1,0 +1,611 @@
+{% extends "base.html" %}
+{% block title %}{{ cluster.cluster_label }} · 运行 #{{ detail.run.cluster_run_id }} · Fundseeker{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{{ url_for('similarity_index') }}">相似度分析</a></li>
+    <li class="breadcrumb-item">
+      <a href="{{ url_for('similarity_run_detail', cluster_run_id=detail.run.cluster_run_id) }}">
+        {{ detail.run.algorithm }} · k={{ detail.run.k }}
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">
+      {{ cluster.cluster_label }} ({{ cluster.size }} 个产品)
+    </li>
+  </ol>
+</nav>
+
+<h4 class="mb-3 d-flex justify-content-between align-items-center">
+  <span>
+    {{ cluster.cluster_label }}
+    <small class="text-muted fs-6">· 簇 #{{ cluster.cluster_id }}</small>
+  </span>
+  <span>
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{{ url_for('api_similarity_cluster', cluster_run_id=detail.run.cluster_run_id, cluster_id=cluster.cluster_id, days=days) }}">JSON API</a>
+  </span>
+</h4>
+
+<!-- Header card -->
+<div class="card shadow-sm mb-3">
+  <div class="card-body py-3">
+    <div class="row g-2">
+      <div class="col-md-3 col-6">
+        <div class="text-muted small">簇规模</div>
+        <div class="fs-4 fw-semibold">{{ cluster.size }}</div>
+      </div>
+      <div class="col-md-3 col-6">
+        <div class="text-muted small">平均 HHI</div>
+        <div class="fs-4 fw-semibold font-monospace">
+          {{ "%.4f"|format(cluster.avg_hhi) if cluster.avg_hhi is not none else '—' }}
+        </div>
+      </div>
+      <div class="col-md-3 col-6">
+        <div class="text-muted small">平均 Overlap (归一化)</div>
+        <div class="fs-4 fw-semibold font-monospace">
+          {{ "%.3f"|format(cluster.avg_overlap) if cluster.avg_overlap is not none else '—' }}
+        </div>
+      </div>
+      <div class="col-md-3 col-6">
+        <div class="text-muted small">平均 Overlap (原始权重)</div>
+        <div class="fs-4 fw-semibold font-monospace">
+          {{ "%.3f"|format(cluster.avg_overlap_raw) if cluster.avg_overlap_raw is not none else '—' }}
+        </div>
+      </div>
+    </div>
+
+    <hr class="my-2">
+
+    <div class="row g-2 small">
+      <div class="col-md-12">
+        <strong class="text-muted">Top 行业:</strong>
+        {% for ind in (cluster.top_industries or [])[:5] %}
+          <span class="badge bg-info text-dark me-1">
+            {{ ind.industry }} · {{ "%.3f"|format(ind.weight) }}
+          </span>
+        {% endfor %}
+        {% if not cluster.top_industries %}
+          <span class="text-muted">无</span>
+        {% endif %}
+      </div>
+      <div class="col-md-12">
+        <strong class="text-muted">Top 持仓:</strong>
+        {% for h in (cluster.top_holdings or [])[:8] %}
+          <span class="d-inline-block me-2 mb-1">
+            <code class="small">{{ h.asset_code }}</code>
+            <span class="small text-muted">{{ h.asset_name or '—' }}</span>
+            <span class="small font-monospace text-muted ms-1">{{ "%.3f"|format(h.weight) }}</span>
+          </span>
+        {% endfor %}
+      </div>
+      <div class="col-md-12">
+        <strong class="text-muted">机构分布:</strong>
+        {% for inst, cnt in (cluster.institution_distribution or {}).items() %}
+          <span class="badge bg-secondary me-1">{{ inst }} · {{ cnt }}</span>
+        {% endfor %}
+        {% if cluster.ac_share_dominance_ratio and cluster.ac_share_dominance_ratio > 0 %}
+          <span class="badge bg-warning text-dark ms-2">
+            AC 份额合并占比 {{ "%.2f"|format(cluster.ac_share_dominance_ratio) }}
+          </span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Value dispersion KPI strip (period NAV change across cluster members) -->
+{% set _latest_dates = (member_value_rows | selectattr('latest_nav_date') | map(attribute='latest_nav_date') | list | sort) %}
+{% set _earliest_dates = (member_value_rows | selectattr('earliest_nav_date') | map(attribute='earliest_nav_date') | list | sort) %}
+{% set _span_latest = _latest_dates | last if _latest_dates else None %}
+{% set _span_earliest = _earliest_dates | first if _earliest_dates else None %}
+{% if dispersion.n > 0 %}
+<div class="card shadow-sm mb-3">
+  <div class="card-header py-2">
+    <span class="fw-semibold small">簇内产品净值变化概览</span>
+    <span class="text-muted small ms-2">
+      查询日: {{ query_date | fmt_date }} ·
+      行情窗口:
+      {{ window_start | fmt_date }}
+      至 {{ end_date | fmt_date }}
+      · {{ dispersion.n }} 只产品有完整起止净值
+    </span>
+  </div>
+  <div class="card-body py-2">
+    <div class="row g-2">
+      <div class="col-md-2 col-6">
+        <div class="text-muted small">平均涨跌幅</div>
+        <div class="fs-5 fw-semibold font-monospace {% if dispersion.mean_change and dispersion.mean_change > 0 %}text-success{% elif dispersion.mean_change and dispersion.mean_change < 0 %}text-danger{% endif %}">
+          {{ "%+.2f%%"|format(dispersion.mean_change * 100) if dispersion.mean_change is not none else '—' }}
+        </div>
+      </div>
+      <div class="col-md-2 col-6">
+        <div class="text-muted small">标准差 σ</div>
+        <div class="fs-5 fw-semibold font-monospace">{{ "%.2f%%"|format(dispersion.std_change * 100) if dispersion.std_change is not none else '—' }}</div>
+      </div>
+      <div class="col-md-2 col-6">
+        <div class="text-muted small">中位数涨跌幅</div>
+        <div class="fs-5 fw-semibold font-monospace {% if dispersion.median_change and dispersion.median_change > 0 %}text-success{% elif dispersion.median_change and dispersion.median_change < 0 %}text-danger{% endif %}">
+          {{ "%+.2f%%"|format(dispersion.median_change * 100) if dispersion.median_change is not none else '—' }}
+        </div>
+      </div>
+      <div class="col-md-2 col-6">
+        <div class="text-muted small">最大 / 最小</div>
+        <div class="fs-6 fw-semibold font-monospace">
+          <span class="text-success">{{ "%+.2f%%"|format(dispersion.max_change * 100) if dispersion.max_change is not none else '—' }}</span>
+          <span class="text-muted"> / </span>
+          <span class="text-danger">{{ "%+.2f%%"|format(dispersion.min_change * 100) if dispersion.min_change is not none else '—' }}</span>
+        </div>
+      </div>
+      <div class="col-md-2 col-6">
+        <div class="text-muted small">正收益占比</div>
+        <div class="fs-5 fw-semibold font-monospace">
+          {{ "%.1f%%"|format(dispersion.positive_share * 100) if dispersion.positive_share is not none else '—' }}
+        </div>
+      </div>
+      <div class="col-md-2 col-6">
+        <div class="text-muted small">极差 (pp)</div>
+        <div class="fs-5 fw-semibold font-monospace">
+          {{ "%+.2f%%"|format(dispersion.range_pct * 100) if dispersion.range_pct is not none else '—' }}
+          {% if dispersion.coefficient_of_variation is not none %}
+            {% if dispersion.coefficient_of_variation < 0.5 %}
+              <span class="badge bg-success small">一致</span>
+            {% elif dispersion.coefficient_of_variation < 1.5 %}
+              <span class="badge bg-warning text-dark small">分化</span>
+            {% else %}
+              <span class="badge bg-danger small">高分化</span>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="alert alert-info py-2 mb-0 mt-2 small">
+      <strong>解读:</strong>
+      以上指标基于各产品在数据库中的实际起止净值计算（最早 NAV → 最新 NAV），而非净值绝对数值。
+      当数据库中产品的最早净值日期晚于 {{ days }} 天的统计区间起始日时，仍以数据库中能取到的最早净值作为基准，
+      这样既能避免在数据不足时被错误地记为 0%，又能让涨幅统计反映真实涨跌。
+      当某只产品仅有一条 NAV 记录时会被排除在排行之外，因此该数值在数据稀疏时也可能为 0% 或 "—"。
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Market composition + days selector -->
+<div class="card shadow-sm mb-3">
+  <div class="card-body py-2 d-flex flex-wrap align-items-center gap-3">
+    <span class="text-muted small">行情走势周期:</span>
+    <div class="btn-group btn-group-sm">
+      {% for d in [30, 60, 90, 180] %}
+        <a href="{{ url_for('similarity_cluster_detail', cluster_run_id=detail.run.cluster_run_id, cluster_id=cluster.cluster_id, days=d) }}"
+           class="btn btn-{{ 'primary' if days == d else 'outline-secondary' }}">
+          {{ d }} 天
+        </a>
+      {% endfor %}
+    </div>
+    <span class="text-muted small ms-3">
+      持仓分布:
+      {% for b in market_breakdown %}
+        <span class="badge bg-light text-dark me-1">
+          {{ b.label }} · {{ "%.1f%%"|format(b.weight * 100) }}
+        </span>
+      {% endfor %}
+      {% if not market_breakdown %}
+        <span class="text-muted">—</span>
+      {% endif %}
+    </span>
+  </div>
+</div>
+
+{% set is_industry_cluster = 'industry' in (detail.run.algorithm or '') %}
+<!-- Charts row 1: holdings (asset clusters only) + industries + distance -->
+<div class="row g-3 mb-3">
+  {% if not is_industry_cluster %}
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100 chart-card">
+      <div class="card-header py-2">
+        <span class="fw-semibold small">Top 持仓</span>
+        <span class="text-muted small ms-2">前 {{ (cluster.top_holdings or []) | length }} 大</span>
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartClusterHoldings" style="max-height: 320px;"></canvas>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+  <div class="col-md-{{ '8' if is_industry_cluster else '4' }}">
+    <div class="card shadow-sm h-100 chart-card">
+      <div class="card-header py-2">
+        <span class="fw-semibold small">行业分布</span>
+        <span class="text-muted small ms-2">基于 top_industries</span>
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartClusterIndustries" style="max-height: 320px;"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card shadow-sm h-100 chart-card">
+      <div class="card-header py-2">
+        <span class="fw-semibold small">成员到质心距离分布</span>
+        <span class="text-muted small ms-2">{{ members | length }} 个成员</span>
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartClusterDistance" style="max-height: 320px;"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Charts row 2: market overlay + composite value index, drawn together -->
+<div class="card shadow-sm mb-3">
+  <div class="card-header py-2">
+    <span class="fw-semibold small">簇综合净值与市场指数对比</span>
+    <span class="text-muted small ms-2">
+      行情窗口:
+      {{ window_start | fmt_date }}
+      至 {{ end_date | fmt_date }}
+      · 综合净值（等权 · {{ composite_series | length }} 个数据点） ·
+      对比指数:
+      {% for d in market_chart_data %}
+        <code class="ms-1">{{ d.code }}</code>
+      {% endfor %}
+      <span class="ms-2 text-muted">（综合净值基于数据库实际 NAV 记录；起点归一为 100）</span>
+    </span>
+  </div>
+  <div class="card-body py-2">
+    <canvas id="chartClusterMarket" style="max-height: 360px;"></canvas>
+  </div>
+</div>
+
+<!-- Top 5 / Bottom 5 performers (by period NAV change) -->
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold small">净值涨幅 Top 5</span>
+        <span class="badge bg-success">业绩最佳</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>代码</th>
+              <th>名称</th>
+              <th>机构</th>
+              <th class="text-end">区间涨跌幅</th>
+              <th class="text-end">数据区间</th>
+              <th class="text-end">持仓市值</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in dispersion.top5 %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td><code>{{ r.product_code }}</code></td>
+                <td>
+                  <a href="{{ url_for('product_detail', product_id=r.product_id) }}">{{ r.product_name }}</a>
+                </td>
+                <td><span class="badge bg-secondary">{{ r.institution_code }}</span></td>
+                <td class="text-end font-monospace fw-semibold text-success">
+                  {{ "%+.2f%%"|format(r.period_change_pct * 100) if r.period_change_pct is not none else '—' }}
+                </td>
+                <td class="text-end font-monospace small text-muted">
+                  {{ r.earliest_nav_date | fmt_date if r.earliest_nav_date else '—' }}
+                  ~ {{ r.latest_nav_date | fmt_date if r.latest_nav_date else '—' }}
+                  {% if r.span_days is not none %}· {{ r.span_days }}天{% endif %}
+                </td>
+                <td class="text-end font-monospace">{{ r.holding_market_value | fmt_amount }}</td>
+              </tr>
+            {% endfor %}
+            {% if not dispersion.top5 %}
+              <tr><td colspan="7" class="text-center text-muted small">无足够数据（产品需要 ≥ 2 条 NAV 记录才能计算涨跌幅）</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold small">净值跌幅 Top 5</span>
+        <span class="badge bg-danger">业绩最差</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>代码</th>
+              <th>名称</th>
+              <th>机构</th>
+              <th class="text-end">区间涨跌幅</th>
+              <th class="text-end">数据区间</th>
+              <th class="text-end">持仓市值</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in dispersion.bottom5 %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td><code>{{ r.product_code }}</code></td>
+                <td>
+                  <a href="{{ url_for('product_detail', product_id=r.product_id) }}">{{ r.product_name }}</a>
+                </td>
+                <td><span class="badge bg-secondary">{{ r.institution_code }}</span></td>
+                <td class="text-end font-monospace fw-semibold text-danger">
+                  {{ "%+.2f%%"|format(r.period_change_pct * 100) if r.period_change_pct is not none else '—' }}
+                </td>
+                <td class="text-end font-monospace small text-muted">
+                  {{ r.earliest_nav_date | fmt_date if r.earliest_nav_date else '—' }}
+                  ~ {{ r.latest_nav_date | fmt_date if r.latest_nav_date else '—' }}
+                  {% if r.span_days is not none %}· {{ r.span_days }}天{% endif %}
+                </td>
+                <td class="text-end font-monospace">{{ r.holding_market_value | fmt_amount }}</td>
+              </tr>
+            {% endfor %}
+            {% if not dispersion.bottom5 %}
+              <tr><td colspan="7" class="text-center text-muted small">无足够数据（产品需要 ≥ 2 条 NAV 记录才能计算涨跌幅）</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Members table -->
+<div class="card shadow-sm">
+  <div class="card-header py-2 d-flex justify-content-between align-items-center">
+    <span class="fw-semibold">簇成员 ({{ members | length }} 个)</span>
+    <div class="btn-group btn-group-sm">
+      {% for s, label in [('distance', '距离'), ('institution', '机构'), ('code', '代码')] %}
+        <a href="{{ url_for('similarity_cluster_detail', cluster_run_id=detail.run.cluster_run_id, cluster_id=cluster.cluster_id, days=days, sort=s) }}"
+           class="btn btn-{{ 'primary' if sort == s else 'outline-secondary' }}">
+          按 {{ label }}{% if sort == s %} ↓{% endif %}
+        </a>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="table-responsive" style="max-height: 480px;">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>机构</th>
+          <th>代码</th>
+          <th>名称</th>
+          <th>类型</th>
+          <th class="text-end">到质心距离</th>
+          <th class="text-end">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in members %}
+          <tr>
+            <td><span class="badge bg-secondary">{{ m.institution_code }}</span></td>
+            <td><code>{{ m.product_code }}</code></td>
+            <td>
+              <a href="{{ url_for('product_detail', product_id=m.product_id) }}">{{ m.product_name }}</a>
+            </td>
+            <td><span class="badge bg-light text-dark">{{ m.product_type }}</span></td>
+            <td class="text-end font-monospace">
+              {{ "%.4f"|format(m.distance_to_center) if m.distance_to_center is not none else '—' }}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-secondary"
+                 href="{{ url_for('similarity_product_view', product_id=m.product_id) }}">归属 →</a>
+            </td>
+          </tr>
+        {% endfor %}
+        {% if not members %}
+          <tr><td colspan="6" class="text-center text-muted">无成员</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='charts.js') }}"></script>
+<script>
+(function () {
+  const colors = FundSeekerCharts.COLORS;
+
+  const cluster = {{ cluster | tojson }};
+
+  // 1. Top holdings (horizontal bar) — show stock name + code.
+  const holdingsCtx = document.getElementById('chartClusterHoldings');
+  if (holdingsCtx && cluster.top_holdings && cluster.top_holdings.length) {
+    const labels = cluster.top_holdings.map(h => {
+      const name = h.asset_name || h.asset_code || '—';
+      return name.length > 14 ? name.slice(0, 12) + '…' : name;
+    });
+    const sublabels = cluster.top_holdings.map(h => h.asset_code || '');
+    new Chart(holdingsCtx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: '权重',
+          data: cluster.top_holdings.map(h => h.weight),
+          backgroundColor: cluster.top_holdings.map((_, i) => colors[i % colors.length] + 'aa'),
+          borderColor: cluster.top_holdings.map((_, i) => colors[i % colors.length]),
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: items => {
+                const idx = items[0].dataIndex;
+                return sublabels[idx] + ' · ' + labels[idx];
+              },
+              label: c => '权重 ' + c.raw.toFixed(4),
+            },
+          },
+        },
+        scales: {
+          x: { beginAtZero: true, ticks: { font: { size: 10 } } },
+          y: { ticks: { font: { size: 10 } } },
+        },
+      },
+    });
+  }
+
+  // 2. Industries (doughnut).
+  const industriesCtx = document.getElementById('chartClusterIndustries');
+  if (industriesCtx && cluster.top_industries && cluster.top_industries.length) {
+    new Chart(industriesCtx, {
+      type: 'doughnut',
+      data: {
+        labels: cluster.top_industries.map(i => i.industry),
+        datasets: [{
+          data: cluster.top_industries.map(i => i.weight),
+          backgroundColor: cluster.top_industries.map((_, i) => colors[i % colors.length] + 'cc'),
+          borderColor: '#fff',
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } },
+          tooltip: {
+            callbacks: {
+              label: c => {
+                const total = cluster.top_industries.reduce((s, x) => s + x.weight, 0);
+                const pct = total ? (c.raw / total * 100).toFixed(1) : '0';
+                return c.label + ': ' + c.raw.toFixed(3) + ' (' + pct + '%)';
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  // 3. Distance histogram (bar).
+  const histogram = {{ distance_histogram | tojson }};
+  const distCtx = document.getElementById('chartClusterDistance');
+  if (distCtx && histogram.length) {
+    new Chart(distCtx, {
+      type: 'bar',
+      data: {
+        labels: histogram.map(h => h.bin),
+        datasets: [{
+          label: '成员数',
+          data: histogram.map(h => h.count),
+          backgroundColor: colors[3] + 'aa',
+          borderColor: colors[3],
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { font: { size: 9 }, maxRotation: 60, minRotation: 30 } },
+          y: { beginAtZero: true, ticks: { font: { size: 10 }, precision: 0 } },
+        },
+      },
+    });
+  }
+
+  // 4. Market overlay + cluster composite NAV (one chart, multi-line).
+  // Both the composite cluster NAV and the chosen market indices are rebased
+  // to 100 at the first point in their shared window so they can be compared
+  // on the same axis.
+  const datasets = {{ market_chart_data | tojson }};
+  const composite = {{ composite_series | tojson }};
+  const marketCtx = document.getElementById('chartClusterMarket');
+
+  if (marketCtx && (datasets.length || composite.length)) {
+    // Shared label set spanning market index dates and composite NAV dates.
+    const dateSet = new Set();
+    datasets.forEach(ds => ds.data.forEach(p => p.date && dateSet.add(p.date)));
+    composite.forEach(p => p.date && dateSet.add(p.date));
+    const labels = Array.from(dateSet).sort();
+
+    // Market index series (one dataset per symbol).
+    const indexSeries = datasets.map((ds, i) => {
+      const lookup = {};
+      ds.data.forEach(p => { lookup[p.date] = p.close; });
+      const closes = labels.map(d => lookup[d] ?? null).filter(v => v !== null);
+      const base = closes[0] || 1;
+      return {
+        label: ds.label + ' (' + ds.code + ')',
+        data: labels.map(d => {
+          const v = lookup[d];
+          return v === null || v === undefined ? null : +(v / base * 100).toFixed(2);
+        }),
+        borderColor: colors[(i + 1) % colors.length],
+        backgroundColor: colors[(i + 1) % colors.length] + '20',
+        borderWidth: 1.5,
+        borderDash: [4, 3],
+        tension: 0.3,
+        pointRadius: 2,
+        pointHoverRadius: 4,
+        spanGaps: false,
+      };
+    });
+
+    // Cluster composite NAV series — already rebased to 100 by the queries
+    // layer; rendered as a bold solid line so it stands out against the
+    // dashed market-index reference lines.
+    const compositeSeries = [{
+      label: '簇综合净值 (等权平均, 起点=100)',
+      data: labels.map(d => {
+        const p = composite.find(x => x.date === d);
+        return p ? +p.close.toFixed(2) : null;
+      }),
+      borderColor: colors[3],
+      backgroundColor: colors[3] + '33',
+      borderWidth: 2.5,
+      tension: 0.3,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      fill: false,
+      spanGaps: true,
+    }];
+
+    new Chart(marketCtx, {
+      type: 'line',
+      data: { labels, datasets: [...compositeSeries, ...indexSeries] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { size: 10 }, usePointStyle: true },
+          },
+          tooltip: {
+            callbacks: {
+              label: c => c.dataset.label + ': ' + (c.raw !== null ? c.raw.toFixed(2) : '—'),
+            },
+          },
+        },
+        scales: {
+          x: { ticks: { font: { size: 9 }, maxTicksLimit: 10 } },
+          y: {
+            ticks: { font: { size: 10 } },
+            title: { display: true, text: '标准化 (起始=100)' },
+          },
+        },
+      },
+    });
+  }
+})();
+</script>
+{% endblock %}

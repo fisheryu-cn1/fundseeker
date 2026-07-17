@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}组合相似度分析 · Fundseeker{% endblock %}
+
+{% block content %}
+<h4 class="mb-3 d-flex justify-content-between align-items-center">
+  <span>组合相似度分析</span>
+  <span>
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{{ url_for('api_similarity_runs') }}">JSON API</a>
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{{ url_for('similarity_compare') }}">跨运行对比</a>
+  </span>
+</h4>
+
+<!-- Filters -->
+<div class="card shadow-sm mb-3">
+  <div class="card-body py-2 d-flex flex-wrap align-items-center gap-3">
+    <span class="text-muted small">报告期:</span>
+    <div class="btn-group btn-group-sm">
+      <a href="{{ url_for('similarity_index', algorithm=current.algorithm) }}"
+         class="btn btn-{{ 'primary' if not current.date else 'outline-secondary' }}">全部</a>
+      {% for d in dates %}
+        <a href="{{ url_for('similarity_index', date=d.isoformat(), algorithm=current.algorithm) }}"
+           class="btn btn-{{ 'primary' if current.date == d else 'outline-secondary' }}">
+          {{ d | fmt_date }}
+        </a>
+      {% endfor %}
+    </div>
+    <span class="text-muted small ms-2">算法:</span>
+    <form class="d-flex align-items-center gap-2 mb-0" method="get">
+      <select name="algorithm" class="form-select form-select-sm" style="width:auto"
+              onchange="this.form.submit()">
+        <option value="">全部</option>
+        {% for a in algorithms %}
+          <option value="{{ a }}" {% if current.algorithm == a %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+      {% if current.date %}
+        <input type="hidden" name="date" value="{{ current.date.isoformat() }}">
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+<!-- KPI strip -->
+<div class="row g-2 mb-3">
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-3">
+        <div class="text-muted small">运行次数</div>
+        <div class="display-6 fw-semibold">{{ kpi.run_total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-3">
+        <div class="text-muted small">涉及算法</div>
+        <div class="display-6 fw-semibold">{{ kpi.algo_total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-3">
+        <div class="text-muted small">报告期数</div>
+        <div class="display-6 fw-semibold">{{ kpi.date_total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-3">
+        <div class="text-muted small">最新报告期</div>
+        <div class="display-6 fw-semibold">
+          {% if kpi.latest_run %}
+            {{ kpi.latest_run.report_date | fmt_date }}
+          {% else %}
+            —
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if not runs %}
+  <div class="alert alert-warning">
+    暂无聚类运行结果。可通过
+    <code>PYTHONPATH=src python scripts/fundseeker_similarity.py cluster ...</code>
+    生成聚类后再次访问。
+  </div>
+{% else %}
+  <div class="row g-3">
+    {% for r in runs %}
+      <div class="col-md-6 col-lg-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-header py-2 d-flex justify-content-between align-items-center">
+            <span class="fw-semibold">
+              <code class="small">{{ r.algorithm }}</code>
+              · k = {{ r.k }}
+            </span>
+            <span class="badge bg-light text-dark">{{ r.report_date | fmt_date }}</span>
+          </div>
+          <div class="card-body py-2">
+            <div class="row g-1 mb-2">
+              <div class="col-6">
+                <div class="text-muted small">产品数</div>
+                <div class="fw-semibold">{{ r.n_products or '—' }}</div>
+              </div>
+              <div class="col-6">
+                <div class="text-muted small">特征维度</div>
+                <div class="fw-semibold">{{ r.n_features or '—' }}</div>
+              </div>
+              <div class="col-6">
+                <div class="text-muted small">Silhouette</div>
+                <div class="fw-semibold font-monospace">
+                  {{ "%.4f"|format(r.silhouette) if r.silhouette is not none else '—' }}
+                </div>
+              </div>
+              <div class="col-6">
+                <div class="text-muted small">Inertia (SSE)</div>
+                <div class="fw-semibold font-monospace">
+                  {{ "%.2f"|format(r.inertia) if r.inertia is not none else '—' }}
+                </div>
+              </div>
+            </div>
+            <div class="text-muted small">
+              产品类型: {{ r.product_type_filter or '全部' }}
+              · 创建于 {{ r.created_at | fmt_dt }}
+            </div>
+          </div>
+          <div class="card-footer py-2 d-flex justify-content-between align-items-center">
+            <a class="btn btn-sm btn-primary"
+               href="{{ url_for('similarity_run_detail', cluster_run_id=r.cluster_run_id) }}">查看 →</a>
+            <a class="btn btn-sm btn-outline-secondary"
+               href="{{ url_for('api_similarity_run', cluster_run_id=r.cluster_run_id) }}">JSON</a>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- Compare run scatter (cross-run silhouette comparison) -->
+  {% if compare_runs | length > 1 %}
+    <div class="card shadow-sm mt-3">
+      <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <span class="fw-semibold small">跨运行 Silhouette 对比</span>
+        <span class="text-muted small">x = k · y = silhouette · 点大小 = 产品数</span>
+      </div>
+      <div class="card-body py-2">
+        <canvas id="chartRunSilhouette" style="max-height: 240px;"></canvas>
+      </div>
+    </div>
+  {% endif %}
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if compare_runs | length > 1 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  const colors = [
+    '#ef4444', '#f97316', '#eab308', '#22c55e',
+    '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4',
+  ];
+  const runs = {{ compare_runs | tojson }};
+  const byAlgo = {};
+  runs.forEach(r => {
+    if (r.silhouette === null) return;
+    (byAlgo[r.algorithm] = byAlgo[r.algorithm] || []).push({
+      x: r.k,
+      y: r.silhouette,
+      r: Math.max(4, Math.min(20, (r.n_products || 100) / 40)),
+    });
+  });
+  const datasets = Object.keys(byAlgo).map((algo, i) => ({
+    label: algo,
+    data: byAlgo[algo],
+    backgroundColor: colors[i % colors.length] + 'cc',
+    borderColor: colors[i % colors.length],
+    borderWidth: 1,
+  }));
+  const ctx = document.getElementById('chartRunSilhouette');
+  if (!ctx || !datasets.length) return;
+  new Chart(ctx, {
+    type: 'bubble',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: c => `${c.dataset.label}: k=${c.raw.x}, silhouette=${c.raw.y.toFixed(4)}`,
+          },
+        },
+      },
+      scales: {
+        x: { title: { display: true, text: 'k (簇数)' }, ticks: { stepSize: 1 } },
+        y: { title: { display: true, text: 'Silhouette' }, beginAtZero: false },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}产品检索 · Fundseeker{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <!-- Filter sidebar -->
+  <aside class="col-md-3">
+    <form method="get" class="card card-body shadow-sm">
+      <h6 class="card-title mb-3">筛选条件</h6>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">关键字</label>
+        <input type="text" name="q" class="form-control form-control-sm"
+               value="{{ current.q }}" placeholder="代码或名称">
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">机构</label>
+        <select name="institution" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for code in institutions %}
+            <option value="{{ code }}" {% if code == current.institution %}selected{% endif %}>
+              {{ code }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">产品类型</label>
+        <select name="type" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for key, label in product_types %}
+            <option value="{{ key }}" {% if key == current.type %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label small mb-1">风险等级 (统一)</label>
+        <select name="risk" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for lvl in risk_levels %}
+            <option value="{{ lvl }}" {% if lvl == current.risk %}selected{% endif %}>
+              {{ lvl }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label small mb-1">状态</label>
+        <select name="status" class="form-select form-select-sm">
+          <option value="">全部</option>
+          {% for s in statuses %}
+            <option value="{{ s }}" {% if s == current.status %}selected{% endif %}>
+              {{ s }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-sm flex-grow-1">查询</button>
+        <a href="{{ url_for('search') }}" class="btn btn-outline-secondary btn-sm">重置</a>
+      </div>
+    </form>
+  </aside>
+
+  <!-- Results -->
+  <section class="col-md-9">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h6 class="mb-0">
+        共 <strong>{{ total }}</strong> 条结果
+        {% if total > 0 %}
+          <span class="text-muted small">
+            (第 {{ page }} / {{ pages }} 页)
+          </span>
+        {% endif %}
+      </h6>
+    </div>
+
+    {% if items %}
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">代码</th>
+              <th scope="col">名称</th>
+              <th scope="col">机构</th>
+              <th scope="col">类型</th>
+              <th scope="col">风险</th>
+              <th scope="col" class="text-end">最新净值</th>
+              <th scope="col">净值日期</th>
+              <th scope="col" class="text-end">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for it in items %}
+              <tr>
+                <td><code>{{ it.product_code }}</code></td>
+                <td class="text-truncate" style="max-width: 24rem;"
+                    title="{{ it.product_name }}">{{ it.product_name }}</td>
+                <td><span class="badge bg-secondary">{{ it.institution_code }}</span></td>
+                <td><span class="badge bg-info text-dark">{{ it.product_type }}</span></td>
+                <td>{{ it.risk_level_standard }}</td>
+                <td class="text-end font-monospace">{{ it.latest_unit_nav | fmt_money }}</td>
+                <td>{{ it.latest_nav_date | fmt_date }}</td>
+                <td class="text-end">
+                  <a href="{{ url_for('product_detail', product_id=it.id) }}"
+                     class="btn btn-sm btn-outline-primary">详情</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {# Pagination #}
+      {% if pages > 1 %}
+        <nav>
+          <ul class="pagination pagination-sm justify-content-center">
+            {% set base_args = current %}
+            <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+              <a class="page-link"
+                 href="{{ url_for('search', page=page-1, **base_args) }}">上一页</a>
+            </li>
+            {% for p in range(1, pages + 1) %}
+              {% if p == 1 or p == pages or (p >= page - 2 and p <= page + 2) %}
+                <li class="page-item {% if p == page %}active{% endif %}">
+                  <a class="page-link"
+                     href="{{ url_for('search', page=p, **base_args) }}">{{ p }}</a>
+                </li>
+              {% elif p == page - 3 or p == page + 3 %}
+                <li class="page-item disabled"><span class="page-link">…</span></li>
+              {% endif %}
+            {% endfor %}
+            <li class="page-item {% if page >= pages %}disabled{% endif %}">
+              <a class="page-link"
+                 href="{{ url_for('search', page=page+1, **base_args) }}">下一页</a>
+            </li>
+          </ul>
+        </nav>
+      {% endif %}
+    {% else %}
+      <div class="alert alert-warning">没有匹配的产品。</div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,218 @@
+# 机构配置：理财产品数据采集目标机构列表
+
+institutions:
+  - code: YFD
+    name: 易方达基金
+    type: fund_company
+    website: https://www.efunds.com.cn
+    product_list_url: https://www.efunds.com.cn/lm/jjcp/
+    detail_source: eastmoney
+    enabled: true
+    request:
+      min_delay_seconds: 5.0
+      max_delay_seconds: 10.0
+      max_retries: 3
+      timeout: 30
+
+  - code: HTF
+    name: 汇添富基金
+    type: fund_company
+    website: https://www.99fund.com
+    product_list_url: https://www.99fund.com/main/products/jijinhb/index.shtml
+    detail_source: eastmoney
+    enabled: false
+    request:
+      min_delay_seconds: 5.0
+      max_delay_seconds: 10.0
+      max_retries: 3
+      timeout: 30
+
+  - code: GF
+    name: 广发基金
+    type: fund_company
+    website: https://www.gffunds.com.cn
+    product_list_url: https://www.gffunds.com.cn/
+    detail_source: eastmoney
+    enabled: true
+    request:
+      min_delay_seconds: 5.0
+      max_delay_seconds: 10.0
+      max_retries: 3
+      timeout: 30
+
+  - code: ChinaAMC
+    name: 华夏基金
+    type: fund_company
+    website: https://www.chinaamc.com
+    product_list_url: https://www.chinaamc.com/
+    detail_source: eastmoney
+    enabled: true
+    request:
+      min_delay_seconds: 5.0
+      max_delay_seconds: 10.0
+      max_retries: 3
+      timeout: 30
+
+  - code: ZY
+    name: 招银理财
+    type: bank_wm
+    website: https://www.cmbchinawm.com
+    product_list_url: https://www.cmbchinawm.com/publicOffering
+    detail_source: official
+    enabled: false
+    request:
+      min_delay_seconds: 8.0
+      max_delay_seconds: 15.0
+      max_retries: 3
+      timeout: 30
+
+  - code: JX
+    name: 建信理财
+    type: bank_wm
+    website: https://www.wealthccb.com
+    product_list_url: https://www.wealthccb.com/productList.html
+    detail_source: official
+    enabled: false
+    request:
+      min_delay_seconds: 8.0
+      max_delay_seconds: 15.0
+      max_retries: 3
+      timeout: 30
+
+  - code: BOC
+    name: 中银理财
+    type: bank_wm
+    website: https://www.bocwm.cn
+    product_list_url: https://www.bocwm.cn/html/1//151/222/index.html
+    detail_source: official
+    enabled: true
+    request:
+      min_delay_seconds: 8.0
+      max_delay_seconds: 15.0
+      max_retries: 3
+      timeout: 30
+
+  - code: SPD
+    name: 浦银理财
+    type: bank_wm
+    website: https://www.spdb-wm.com
+    product_list_url: https://www.spdb-wm.com/financialProducts/
+    detail_source: official
+    enabled: true
+    request:
+      min_delay_seconds: 8.0
+      max_delay_seconds: 15.0
+      max_retries: 3
+      timeout: 30
+
+  - code: CITIC
+    name: 信银理财
+    type: bank_wm
+    website: https://www.citic-wealth.com
+    product_list_url: https://www.citic-wealth.com/yymk/lccs/
+    detail_source: official
+    enabled: true
+    request:
+      min_delay_seconds: 2.0
+      max_delay_seconds: 4.0
+      max_retries: 3
+      timeout: 30
+
+  - code: CEB
+    name: 光大理财
+    type: bank_wm
+    website: https://www.cebwm.com
+    product_list_url: https://www.chinawealth.com.cn/lcweb/management/proScreen
+    detail_source: chinawealth
+    enabled: false
+    request:
+      min_delay_seconds: 8.0
+      max_delay_seconds: 15.0
+      max_retries: 3
+      timeout: 60
+
+# 第三方公共数据源配置
+sources:
+  eastmoney:
+    name: 天天基金网
+    base_url: https://fundf10.eastmoney.com
+    # 基金详情页面模板，{code} 替换为基金代码
+    detail_page: https://fundf10.eastmoney.com/jbgk_{code}.html
+
+# 全局采集策略
+# Collector-specific tuning
+cmbwm:
+  # CMB distribution page uses signed APIs and Playwright interaction.
+  # Limit series traversal to keep runtime reasonable for the pilot phase.
+  max_series: 3
+  wait_seconds: 3
+
+global:
+  user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+  default_headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    Accept-Language: "zh-CN,zh;q=0.9,en;q=0.8"
+    Accept-Encoding: "gzip, deflate, br"
+    Connection: "keep-alive"
+  # 全局默认请求间隔（秒）
+  default_min_delay: 5.0
+  default_max_delay: 10.0
+  # 是否遵守 robots.txt
+  respect_robots_txt: true
+  # 单任务最长运行时间（秒）
+  max_runtime_seconds: 3600
+
+# 风险等级统一映射
+risk_level_mapping:
+  R1: L1
+  低风险: L1
+  PR1: L1
+  低风险(R1): L1
+  极低风险: L1
+  保守型(1R): L1
+  二星级: L2
+  R2: L2
+  中低风险: L2
+  PR2: L2
+  中低风险(R2): L2
+  较低风险: L2
+  稳健型(2R): L2
+  三星级: L3
+  R3: L3
+  中风险: L3
+  PR3: L3
+  中风险(R3): L3
+  中等风险: L3
+  平衡型(3R): L3
+  四星级: L4
+  R4: L4
+  中高风险: L4
+  PR4: L4
+  中高风险(R4): L4
+  较高风险: L4
+  增长型(4R): L4
+  五星级: L5
+  R5: L5
+  高风险: L5
+  PR5: L5
+  高风险(R5): L5
+  进取型(5R): L5
+
+# 产品类型统一映射
+product_type_mapping:
+  股票型: equity
+  权益类: equity
+  混合型: mixed
+  混合类: mixed
+  债券型: fixed_income
+  固定收益类: fixed_income
+  指数型: index
+  指数类: index
+  货币型: money_market
+  现金管理类: money_market
+  QDII: qdii
+  FOF: fof
+  养老理财: fof
+  商品型: commodity
+  商品及金融衍生品类: commodity
+  其他: other

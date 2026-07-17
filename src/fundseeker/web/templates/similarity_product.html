@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ product.product_name }} · 相似度归属 · Fundseeker{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{{ url_for('similarity_index') }}">相似度分析</a></li>
+    <li class="breadcrumb-item">
+      <a href="{{ url_for('product_detail', product_id=product.id) }}">{{ product.product_code }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">相似度归属</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h4 class="mb-1">{{ product.product_name }}</h4>
+    <div class="text-muted small">
+      <code>{{ product.institution_code }}</code> ·
+      <code>{{ product.product_code }}</code> ·
+      <span class="badge bg-info text-dark">{{ product.product_type }}</span>
+    </div>
+  </div>
+  <div>
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{{ url_for('api_similarity_product', product_id=product.id) }}">JSON API</a>
+  </div>
+</div>
+
+<div class="alert alert-info py-2">
+  <strong>在 {{ memberships | length }} 个聚类运行中出现的归属</strong>
+  <small class="d-block">本产品在不同算法、不同 k、不同报告期的聚类中可能被分入不同的簇，可由此观察持仓策略的稳定性。</small>
+</div>
+
+{% if not memberships %}
+  <div class="alert alert-warning">
+    该产品尚未出现在任何聚类运行中。可能因为：未参与最近一次聚类，或聚类时该产品被剔除（如 A/C 份额合并后）。
+  </div>
+{% else %}
+  <div class="card shadow-sm">
+    <div class="card-header py-2">
+      <span class="fw-semibold">聚类归属详情</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>报告期</th>
+            <th>算法</th>
+            <th class="text-end">k</th>
+            <th class="text-end">簇编号</th>
+            <th class="text-end">簇规模</th>
+            <th class="text-end">到质心距离</th>
+            <th>Top 行业</th>
+            <th class="text-end">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in memberships %}
+            <tr>
+              <td><code>{{ m.report_date | fmt_date }}</code></td>
+              <td><code>{{ m.algorithm }}</code></td>
+              <td class="text-end font-monospace">{{ m.k }}</td>
+              <td class="text-end font-monospace"><strong>{{ m.cluster_id }}</strong></td>
+              <td class="text-end font-monospace">{{ m.cluster_size }}</td>
+              <td class="text-end font-monospace">
+                {{ "%.4f"|format(m.distance_to_center) if m.distance_to_center is not none else '—' }}
+              </td>
+              <td>
+                {% for ind in (m.top_industries or [])[:3] %}
+                  <span class="badge bg-info text-dark me-1">{{ ind.industry }}</span>
+                {% endfor %}
+                {% if not m.top_industries %}
+                  <span class="text-muted small">—</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-primary"
+                   href="{{ url_for('similarity_cluster_detail', cluster_run_id=m.cluster_run_id, cluster_id=m.cluster_id) }}">
+                  查看簇 →
+                </a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

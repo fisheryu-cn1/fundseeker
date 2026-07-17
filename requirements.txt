@@ -1,0 +1,26 @@
+# Core data & ORM
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+pandas>=2.2
+numpy>=1.26
+
+# Web scraping
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.2
+
+# Utilities
+pyyaml>=6.0
+python-dateutil>=2.9
+json5>=0.15
+
+# Web UI (read-only search/dashboard)
+Flask>=3.0
+
+# Testing
+pytest>=8.0
+
+# Optional: dynamic pages & PDF parsing (install when needed)
+# playwright>=1.45
+# pdfplumber>=0.11
+# PyPDF2>=3.0

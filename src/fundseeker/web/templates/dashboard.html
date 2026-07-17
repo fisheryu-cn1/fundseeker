@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}数据概览 · Fundseeker{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">数据概览</h4>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">产品总数</div>
+        <div class="display-6">{{ summary.product_total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">覆盖机构</div>
+        <div class="display-6">{{ summary.institution_total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">净值记录</div>
+        <div class="display-6">{{ summary.nav_total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm text-center h-100">
+      <div class="card-body">
+        <div class="text-muted small">最近成功</div>
+        <div class="fs-6 mt-2">
+          {{ summary.last_success_at | fmt_dt if summary.last_success_at else '—' }}
+          {% if summary.last_success_job %}
+            <div class="text-muted small">({{ summary.last_success_job }})</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Market snapshot -->
+{% if market and market.latest_quotes %}
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>市场行情快照</span>
+    <a href="{{ url_for('market_dashboard') }}" class="btn btn-sm btn-outline-primary">
+      进入市场行情 →
+    </a>
+  </div>
+  <div class="card-body py-2">
+    <div class="row g-2">
+      {% for q in market.latest_quotes %}
+        {% if q.market_region in ('domestic', 'us', 'hk') %}
+          <div class="col-md-3 col-6">
+            <div class="border rounded p-2 text-center h-100">
+              <div class="text-muted small d-flex justify-content-center align-items-center gap-1">
+                {{ q.symbol_name }}
+                <span class="badge bg-light text-dark" style="font-size: 0.6rem;">{{ q.market_region | market_region }}</span>
+              </div>
+              <div class="fs-5 font-monospace mt-1">
+                {{ "%.0f"|format(q.close_price) if q.close_price is not none else '—' }}
+              </div>
+              {% if q.change_pct is not none %}
+                <div class="small fw-semibold {{ 'text-danger' if q.change_pct > 0 else 'text-success' if q.change_pct < 0 else 'text-muted' }}">
+                  {{ "%+.2f%%"|format(q.change_pct) }}
+                </div>
+              {% endif %}
+              <div class="text-muted small" style="font-size: 0.7rem;">
+                {{ q.quote_date | fmt_date }}
+              </div>
+            </div>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Holding coverage cards -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>持仓覆盖</span>
+    <a href="{{ url_for('holdings_browse') }}" class="btn btn-sm btn-outline-primary">
+      进入持仓检索 →
+    </a>
+  </div>
+  <div class="card-body">
+    <div class="row g-3 mb-3">
+      <div class="col-md-2 col-6">
+        <div class="border rounded p-2 text-center h-100">
+          <div class="text-muted small">持仓报告数</div>
+          <div class="fs-4 font-monospace">{{ summary.report_total }}</div>
+        </div>
+      </div>
+      <div class="col-md-2 col-6">
+        <div class="border rounded p-2 text-center h-100">
+          <div class="text-muted small">持仓明细条数</div>
+          <div class="fs-4 font-monospace">{{ summary.holding_total }}</div>
+        </div>
+      </div>
+      <div class="col-md-2 col-6">
+        <div class="border rounded p-2 text-center h-100">
+          <div class="text-muted small">有持仓产品数</div>
+          <div class="fs-4 font-monospace">{{ summary.products_with_holding }}</div>
+        </div>
+      </div>
+      <div class="col-md-3 col-6">
+        <div class="border rounded p-2 text-center h-100">
+          <div class="text-muted small">最新报告期</div>
+          <div class="fs-5 font-monospace">
+            {{ summary.latest_holding_date | fmt_date if summary.latest_holding_date else '—' }}
+          </div>
+          {% if summary.latest_holding_institutions %}
+            <div class="text-muted small">
+              {{ summary.latest_holding_institutions | join(', ') }}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+      <div class="col-md-3 col-6">
+        <div class="border rounded p-2 text-center h-100">
+          <div class="text-muted small">持仓产品占比</div>
+          {% if summary.product_total %}
+            <div class="fs-5 font-monospace">
+              {{ '{:.1%}'.format(summary.products_with_holding / summary.product_total) }}
+            </div>
+          {% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <h6 class="text-muted small mb-2">按资产类型分布</h6>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead><tr>
+              <th>资产类型</th>
+              <th class="text-end">记录数</th>
+            </tr></thead>
+            <tbody>
+              {% for r in summary.holding_by_type %}
+                <tr>
+                  <td><span class="badge bg-light text-dark">{{ r.asset_type | asset_class }}</span></td>
+                  <td class="text-end font-monospace">{{ r.count }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="2" class="text-muted text-center small py-2">无数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <h6 class="text-muted small mb-2">按机构分布</h6>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead><tr>
+              <th>机构</th>
+              <th class="text-end">记录数</th>
+            </tr></thead>
+            <tbody>
+              {% for r in summary.holding_by_institution %}
+                <tr>
+                  <td><span class="badge bg-secondary">{{ r.institution_code }}</span></td>
+                  <td class="text-end font-monospace">{{ r.count }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="2" class="text-muted text-center small py-2">无数据</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Distribution table -->
+<div class="card shadow-sm mb-4">
+  <div class="card-header">产品分布 (按机构 × 类型)</div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead class="table-light"><tr>
+        <th>机构</th><th>类型</th><th class="text-end">数量</th>
+      </tr></thead>
+      <tbody>
+        {% for row in summary.by_inst_type %}
+          <tr>
+            <td><span class="badge bg-secondary">{{ row.institution_code }}</span></td>
+            <td>{{ row.product_type }}</td>
+            <td class="text-end font-monospace">{{ row.count }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Recent collection logs -->
+<div class="card shadow-sm">
+  <div class="card-header">最近 10 条采集日志</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr>
+        <th>#</th><th>任务</th><th>机构</th><th>开始</th><th>结束</th>
+        <th>状态</th><th class="text-end">记录数</th>
+        <th>错误信息</th>
+      </tr></thead>
+      <tbody>
+        {% for log in summary.recent_logs %}
+          <tr>
+            <td>{{ log.id }}</td>
+            <td>{{ log.job_name }}</td>
+            <td><span class="badge bg-secondary">{{ log.institution_code or '—' }}</span></td>
+            <td>{{ log.start_time | fmt_dt }}</td>
+            <td>{{ log.end_time | fmt_dt }}</td>
+            <td>
+              <span class="badge bg-{{
+                'success' if log.status == 'success'
+                else 'warning' if log.status == 'running'
+                else 'danger' }}">
+                {{ log.status }}
+              </span>
+            </td>
+            <td class="text-end font-monospace">
+              {{ log.records_count if log.records_count is not none else '—' }}
+            </td>
+            <td class="text-danger small text-truncate" style="max-width: 16rem;"
+                title="{{ log.error_message or '' }}">
+              {{ log.error_message or '' }}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

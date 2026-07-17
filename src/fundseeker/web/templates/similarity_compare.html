@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}跨聚类运行对比 · Fundseeker{% endblock %}
+
+{% block content %}
+<h4 class="mb-3 d-flex justify-content-between align-items-center">
+  <span>跨聚类运行对比</span>
+  <span>
+    <a class="btn btn-sm btn-outline-secondary"
+       href="{{ url_for('api_similarity_compare') }}">JSON API</a>
+  </span>
+</h4>
+
+<div class="row g-2 mb-3">
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">总运行数</div>
+        <div class="display-6 fw-semibold">{{ runs | length }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">涉及算法</div>
+        <div class="display-6 fw-semibold">{{ by_algo | length }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">最高 Silhouette</div>
+        <div class="display-6 fw-semibold font-monospace">
+          {% set sil_vals = runs | selectattr('silhouette') | map(attribute='silhouette') | list %}
+          {{ "%.4f"|format(sil_vals | max) if sil_vals else '—' }}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3 col-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-body py-2">
+        <div class="text-muted small">最大产品规模</div>
+        <div class="display-6 fw-semibold">
+          {% set n_vals = runs | selectattr('n_products') | map(attribute='n_products') | list %}
+          {{ (n_vals | max) if n_vals else '—' }}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scatter chart -->
+{% if runs | length > 1 %}
+  <div class="card shadow-sm mb-3">
+    <div class="card-header py-2">
+      <span class="fw-semibold small">Silhouette vs k（气泡大小 = 产品数）</span>
+    </div>
+    <div class="card-body py-2">
+      <canvas id="chartRunCompare" style="max-height: 360px;"></canvas>
+    </div>
+  </div>
+{% endif %}
+
+<!-- Table -->
+<div class="card shadow-sm">
+  <div class="card-header py-2">
+    <span class="fw-semibold">全部运行</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>报告期</th>
+          <th>算法</th>
+          <th class="text-end">k</th>
+          <th class="text-end">产品数</th>
+          <th class="text-end">特征维度</th>
+          <th class="text-end">Silhouette</th>
+          <th class="text-end">Inertia</th>
+          <th>产品类型</th>
+          <th>创建时间</th>
+          <th class="text-end">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+          <tr>
+            <td>{{ r.cluster_run_id }}</td>
+            <td>{{ r.report_date | fmt_date }}</td>
+            <td><code>{{ r.algorithm }}</code></td>
+            <td class="text-end font-monospace">{{ r.k }}</td>
+            <td class="text-end font-monospace">{{ r.n_products or '—' }}</td>
+            <td class="text-end font-monospace">{{ r.n_features or '—' }}</td>
+            <td class="text-end font-monospace">
+              {{ "%.4f"|format(r.silhouette) if r.silhouette is not none else '—' }}
+            </td>
+            <td class="text-end font-monospace">
+              {{ "%.2f"|format(r.inertia) if r.inertia is not none else '—' }}
+            </td>
+            <td><span class="badge bg-light text-dark">{{ r.product_type_filter or '全部' }}</span></td>
+            <td class="text-muted small">{{ r.created_at | fmt_dt }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary"
+                 href="{{ url_for('similarity_run_detail', cluster_run_id=r.cluster_run_id) }}">查看 →</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% if runs | length > 1 %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  const colors = [
+    '#ef4444', '#f97316', '#eab308', '#22c55e',
+    '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4',
+  ];
+  const byAlgo = {{ by_algo | tojson }};
+  const datasets = Object.keys(byAlgo).map((algo, i) => ({
+    label: algo,
+    data: byAlgo[algo].map(r => ({
+      x: r.k,
+      y: r.silhouette,
+      r: Math.max(5, Math.min(20, (r.n_products || 100) / 40)),
+    })).filter(p => p.y !== null),
+    backgroundColor: colors[i % colors.length] + '99',
+    borderColor: colors[i % colors.length],
+    borderWidth: 1,
+  }));
+  const ctx = document.getElementById('chartRunCompare');
+  if (!ctx) return;
+  new Chart(ctx, {
+    type: 'bubble',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: c => c.dataset.label + ': k=' + c.raw.x + ', silhouette=' + c.raw.y.toFixed(4),
+          },
+        },
+      },
+      scales: {
+        x: { title: { display: true, text: 'k (簇数)' }, ticks: { stepSize: 1 } },
+        y: { title: { display: true, text: 'Silhouette' }, beginAtZero: false },
+      },
+    },
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
