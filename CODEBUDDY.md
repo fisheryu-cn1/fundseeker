@@ -66,9 +66,12 @@ All writers use PostgreSQL `INSERT ... ON CONFLICT DO NOTHING` with explicit uni
 ### Collection layer
 `BaseCollector` (`collectors/base.py`) is the abstract interface: subclasses implement `collect_product_list()` and `normalize()` (raw → unified `product_info` schema). `runner.py` provides the high-level `run_fund_company` / `run_bank_wm` / `run_holdings` / `run_market_quotes` functions, each returning a `TaskResult` and writing a `CollectionLog`. Collectors are registered in dictionaries (`FUND_COLLECTORS`, `BANK_WM_COLLECTORS`) keyed by institution code; adding a source means writing a subclass and registering it.
 
-Holdings use a separate `HoldingCollector` base (`collectors/holding_base.py`) with `collect_holdings()` returning a standardized dict. The main implementation is `EastmoneyFundHoldingCollector` (`collectors/eastmoney_holding.py`); fund-company product lists come from `FundCompanyCollector` (Eastmoney public API), while bank WM collectors (`*wm.py`) scrape official sites. All HTTP goes through `utils/http.py::PoliteHttpClient`, which applies per-institution rate limits and robots.txt rules from `config/institutions.yaml`.
+Holdings use a separate `HoldingCollector` base (`collectors/holding_base.py`) with `collect_holdings()` returning a standardized dict. The main implementation is `EastmoneyFundHoldingCollector` (`collectors/eastmoney_holding.py`); fund-company product lists come from `FundCompanyCollector` (Eastmoney public API), while bank WM collectors (`*wm.py`) scrape official sites. All HTTP goes through `utils/http.py::PoliteHttpClient`, which applies per-institution rate limits and robots.txt rules from `config/institutions.yaml`. Timeouts are enforced as `(connect_timeout, read_timeout)` tuples, TCP keepalive is enabled, and the connection pool is kept small to avoid silently reusing dead connections. `Timeout` errors are retried with exponential backoff up to `max_retries`.
 
-Config is loaded by `src/fundseeker/config.py::load_config` from `config/institutions.yaml` (institution list, `sources`, `global` request policy, `risk_level_mapping`, `product_type_mapping`). Collectors read their `request` block from this config.
+Config is loaded by `src/fundseeker/config.py::load_config` from `config/institutions.yaml` (institution list, `sources`, `global` request policy, `risk_level_mapping`, `product_type_mapping`). Collectors read their `request` block from this config. For holdings collection, two additional global knobs apply:
+- `holding_per_product_timeout_seconds` (default 90): hard per-product ceiling inside `run_holdings`, independent of HTTP-layer timeouts.
+- `stale_log_minutes` (default 30): `running` `CollectionLog` rows older than this are marked `failed` on startup to recover from crashed/hung prior runs.
+- `max_runtime_seconds` (default 3600): overall batch deadline for `run_holdings`; the loop stops early if exceeded.
 
 ### Similarity analysis layer (`src/fundseeker/similarity/`)
 `service.py::SimilarityService` is the stateless orchestrator (read-only w.r.t. raw tables; writes only to `similarity_*` tables). The computation flow:
@@ -96,3 +99,5 @@ Config is loaded by `src/fundseeker/config.py::load_config` from `config/institu
 - Similarity tests are DB-free (synthetic `FeatureMatrix`); collection/query tests may need a live DB.
 - `.venv/`, `.claude/`, `.agents/`, `skills-lock.json` are gitignored local files — do not commit.
 - `archive/` holds v1.0 history; `docs/` holds design/评审 docs; `Proposal/` holds data-source specs.
+- If `collect --holdings` appears to hang, check `collection_log` for `running` rows; the runner now auto-closes stale ones, but a manual kill may still leave a socket blocked. Per-product and batch timeouts should prevent one bad request from stalling the whole batch.
+- To tune Eastmoney holding collection, edit `global.holding_per_product_timeout_seconds` and per-institution `request.timeout` in `config/institutions.yaml`. Lower read timeouts make the batch more resilient to silent connection drops, but may increase skipped products on slow networks.

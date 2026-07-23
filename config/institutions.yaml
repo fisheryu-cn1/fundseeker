@@ -161,6 +161,10 @@ global:
   respect_robots_txt: true
   # 单任务最长运行时间（秒）
   max_runtime_seconds: 3600
+  # 持仓采集中单个产品的硬超时（秒），作为 HTTP 层 timeout 的第二道防线
+  holding_per_product_timeout_seconds: 90
+  # 启动时清理超过该分钟数仍处于 running 状态的 collection_log
+  stale_log_minutes: 30
 
 # 风险等级统一映射
 risk_level_mapping:

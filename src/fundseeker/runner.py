@@ -8,8 +8,10 @@ post-run summary report.
 
 from __future__ import annotations
 
+import concurrent.futures
+import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, text
@@ -409,6 +411,62 @@ def _ensure_security(session, row: dict[str, Any]) -> None:
     session.execute(stmt)
 
 
+def _close_stale_collection_logs(session, stale_minutes: int = 30) -> int:
+    """Mark long-running collection logs as failed to recover from crashes.
+
+    When a collector process is killed or hangs without updating the log row,
+    subsequent runs would otherwise see the job as already running. This helper
+    closes any ``running`` log whose start_time is older than the threshold.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+    stmt = (
+        CollectionLog.__table__.update()
+        .where(
+            CollectionLog.status == "running",
+            CollectionLog.start_time < cutoff,
+        )
+        .values(
+            status="failed",
+            end_time=datetime.now(timezone.utc),
+            error_message="marked stale by runner startup",
+        )
+    )
+    result = session.execute(stmt)
+    session.commit()
+    return result.rowcount
+
+
+def _call_with_timeout(func, timeout: float, *args, **kwargs) -> Any:
+    """Run ``func`` in a single worker thread with a hard timeout.
+
+    This is a second line of defence: even if the HTTP library's timeout does
+    not fire (e.g. a silent connection drop that TCP keepalive has not yet
+    detected), the runner will not block forever on a single product.
+
+    Note: we explicitly ``shutdown(wait=False)`` so that a hung worker thread
+    does not delay the main loop while it waits for a dead socket to close.
+    """
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        # cancel_futures requires Python 3.9+; fall back gracefully.
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            executor.shutdown(wait=False)
+        raise TimeoutError(
+            f"Collector call timed out after {timeout}s"
+        ) from exc
+    finally:
+        # If we returned normally, the worker has finished; shut down without
+        # blocking the main thread.
+        if future.done():
+            executor.shutdown(wait=False)
+
+
 def run_holdings(
     institution_code: str | None = None,
     years: int = 1,
@@ -423,6 +481,16 @@ def run_holdings(
     engine = get_engine()
     Session = get_session_maker(engine)
     session = Session()
+
+    # Recover from previously crashed or hung holding collection runs.
+    stale_log_minutes = int(
+        config.get("global", {}).get("stale_log_minutes", 30)
+    )
+    stale_closed = _close_stale_collection_logs(
+        session, stale_minutes=stale_log_minutes
+    )
+    if stale_closed:
+        logging.warning("Marked %d stale collection_log rows as failed", stale_closed)
 
     start = datetime.now(timezone.utc)
     log = CollectionLog(
@@ -483,15 +551,53 @@ def run_holdings(
         allocations_inserted = 0
         summaries_inserted = 0
         skipped_products = 0
+        timed_out_products = 0
+
+        # Guard against a single hung request stalling the entire batch. The
+        # HTTP client already uses connect/read timeouts; this is a hard ceiling
+        # for the whole collect_holdings call (including retries and delays).
+        per_product_timeout = float(
+            config.get("global", {}).get("holding_per_product_timeout_seconds", 90.0)
+        )
+        max_runtime_seconds = float(
+            config.get("global", {}).get("max_runtime_seconds", 3600.0)
+        )
+        batch_deadline = start + timedelta(seconds=max_runtime_seconds)
 
         for product in products:
+            if datetime.now(timezone.utc) > batch_deadline:
+                logging.warning(
+                    "Holding collection reached max_runtime_seconds=%s; stopping batch.",
+                    max_runtime_seconds,
+                )
+                break
+
             try:
-                result = collector.collect_holdings(
+                result = _call_with_timeout(
+                    collector.collect_holdings,
+                    per_product_timeout,
                     product_code=product.product_code,
                     product_name=product.product_name,
                     years=years,
                 )
+            except TimeoutError as exc:
+                logging.warning(
+                    "Timeout collecting holdings for %s: %s", product.product_code, exc
+                )
+                # A hung connection may still be alive in the worker thread.
+                # Reset the collector's session so the next product does not
+                # wait on a dead connection from the pool.
+                try:
+                    collector.http.reset_session()
+                except Exception:
+                    logging.exception("Failed to reset HTTP session after timeout")
+                timed_out_products += 1
+                skipped_products += 1
+                continue
             except Exception:
+                logging.exception(
+                    "Failed to collect holdings for %s", product.product_code
+                )
                 skipped_products += 1
                 continue
 
@@ -630,6 +736,9 @@ def run_holdings(
         session.commit()
 
         duration = (end - start).total_seconds()
+        summary_message = None
+        if timed_out_products:
+            summary_message = f"{timed_out_products} products timed out (>{per_product_timeout}s)"
         return TaskResult(
             task_name=f"holdings:{institution_code or 'all'}",
             institution_code=institution_code,
@@ -637,6 +746,7 @@ def run_holdings(
             records_count=log.records_count,
             inserted=reports_inserted,
             skipped=skipped_products,
+            error_message=summary_message,
             duration_seconds=duration,
         )
 

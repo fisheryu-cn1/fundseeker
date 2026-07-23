@@ -10,13 +10,43 @@ Features:
 from __future__ import annotations
 
 import random
+import socket
 import ssl
 import time
 from typing import Any
 
 import requests
 import urllib3
+from requests.adapters import HTTPAdapter
 from urllib.robotparser import RobotFileParser
+
+
+class _KeepAliveAdapter(HTTPAdapter):
+    """Adapter that enables TCP keepalive to detect dead connections.
+
+    The main failure mode we are targeting is a server that accepts the TCP
+    connection but then stops sending data (silent drop). TCP keepalive will
+    eventually close such a socket, causing requests to fail fast instead of
+    blocking forever. Platform-specific option names are handled gracefully.
+    """
+
+    def init_poolmanager(self, *args, **pool_kwargs):
+        socket_options = [
+            (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+        ]
+        # Linux TCP keepalive tunables
+        if hasattr(socket, "TCP_KEEPIDLE"):
+            socket_options.append((socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30))
+        if hasattr(socket, "TCP_KEEPINTVL"):
+            socket_options.append((socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10))
+        if hasattr(socket, "TCP_KEEPCNT"):
+            socket_options.append((socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3))
+        # macOS/BSD tunable name
+        if hasattr(socket, "TCP_KEEPALIVE"):
+            socket_options.append((socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, 30))
+
+        pool_kwargs["socket_options"] = socket_options
+        return super().init_poolmanager(*args, **pool_kwargs)
 
 
 class _LegacyRenegotiationAdapter(requests.adapters.HTTPAdapter):
@@ -44,7 +74,7 @@ class PoliteHttpClient:
         min_delay: float = 5.0,
         max_delay: float = 10.0,
         max_retries: int = 3,
-        timeout: float = 30.0,
+        timeout: float | tuple[float, float] = 30.0,
         respect_robots_txt: bool = True,
         ssl_legacy: bool = False,
     ):
@@ -55,13 +85,32 @@ class PoliteHttpClient:
         self.min_delay = max(0.0, float(min_delay))
         self.max_delay = max(self.min_delay, float(max_delay))
         self.max_retries = max(0, int(max_retries))
-        self.timeout = float(timeout)
+        # Normalize timeout to (connect, read) tuple. Keeping read timeout
+        # relatively tight prevents a server from silently stalling the
+        # response for minutes while still giving it time to send data.
+        if isinstance(timeout, (tuple, list)) and len(timeout) >= 2:
+            connect_timeout = float(timeout[0])
+            read_timeout = float(timeout[1])
+        else:
+            total = float(timeout)
+            connect_timeout = min(10.0, total / 3.0)
+            read_timeout = total - connect_timeout
+        self.timeout = (connect_timeout, read_timeout)
         self.respect_robots_txt = respect_robots_txt
         self._session = requests.Session()
-        if ssl_legacy:
-            self._session.mount("https://", _LegacyRenegotiationAdapter())
+
+        # Use a small connection pool and TCP keepalive. A large/default pool
+        # can silently reuse a dead connection and block forever on the next
+        # request; keepalive plus tight read timeouts makes that far less likely.
+        adapter_cls = _LegacyRenegotiationAdapter if ssl_legacy else _KeepAliveAdapter
+        adapter = adapter_cls(pool_connections=1, pool_maxsize=2, max_retries=0)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
+
         self._last_request_time: float | None = None
         self._robots_cache: dict[str, RobotFileParser] = {}
+        self._adapter_cls = adapter_cls
+        self._headers = headers
 
         default_headers = {
             "User-Agent": self.user_agent,
@@ -75,6 +124,35 @@ class PoliteHttpClient:
         }
         if headers:
             default_headers.update(headers)
+        self._session.headers.update(default_headers)
+
+    def reset_session(self) -> None:
+        """Close the current session and create a fresh one.
+
+        Call this after a hard timeout to avoid leaving a hung connection in
+        the connection pool for subsequent requests.
+        """
+        try:
+            self._session.close()
+        except Exception:
+            pass
+        self._session = requests.Session()
+        adapter = self._adapter_cls(pool_connections=1, pool_maxsize=2, max_retries=0)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
+
+        default_headers = {
+            "User-Agent": self.user_agent,
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+        }
+        if self._headers:
+            default_headers.update(self._headers)
         self._session.headers.update(default_headers)
 
     def _enforce_delay(self) -> None:
@@ -108,49 +186,55 @@ class PoliteHttpClient:
             # If robots.txt cannot be parsed, allow fetch conservatively.
             return True
 
+    def _request_with_retries(
+        self,
+        method: str,
+        url: str,
+        **kwargs,
+    ) -> requests.Response:
+        """Execute a request with polite delay, timeout and retry logic."""
+        kwargs.setdefault("timeout", self.timeout)
+        last_exception: Exception | None = None
+
+        for attempt in range(self.max_retries + 1):
+            self._enforce_delay()
+            try:
+                if method == "GET":
+                    response = self._session.get(url, **kwargs)
+                elif method == "POST":
+                    response = self._session.post(url, **kwargs)
+                else:
+                    raise ValueError(f"Unsupported HTTP method: {method}")
+                response.raise_for_status()
+                return response
+            except requests.Timeout as exc:
+                # Timeouts (connect/read) are exactly the failures we expect to
+                # see when a server stalls. Always retry them unless this was
+                # the last attempt.
+                last_exception = exc
+                if attempt < self.max_retries:
+                    backoff = 2 ** attempt + random.uniform(0, 1)
+                    time.sleep(backoff)
+                continue
+            except requests.RequestException as exc:
+                last_exception = exc
+                if attempt < self.max_retries:
+                    backoff = 2 ** attempt + random.uniform(0, 1)
+                    time.sleep(backoff)
+                continue
+
+        raise last_exception or RuntimeError(f"Failed to {method} {url}")
+
     def get(
         self, url: str, *, params: dict[str, Any] | None = None, **kwargs
     ) -> requests.Response:
         """Perform a polite GET request with retries."""
         if not self._can_fetch(url):
             raise RuntimeError(f"robots.txt disallows fetching {url}")
-
-        kwargs.setdefault("timeout", self.timeout)
-        last_exception: Exception | None = None
-
-        for attempt in range(self.max_retries + 1):
-            self._enforce_delay()
-            try:
-                response = self._session.get(url, params=params, **kwargs)
-                response.raise_for_status()
-                return response
-            except requests.RequestException as exc:
-                last_exception = exc
-                if attempt < self.max_retries:
-                    backoff = 2 ** attempt + random.uniform(0, 1)
-                    time.sleep(backoff)
-                continue
-
-        raise last_exception or RuntimeError(f"Failed to fetch {url}")
+        return self._request_with_retries("GET", url, params=params, **kwargs)
 
     def post(
         self, url: str, *, data: dict[str, Any] | None = None, **kwargs
     ) -> requests.Response:
         """Perform a polite POST request with retries."""
-        kwargs.setdefault("timeout", self.timeout)
-        last_exception: Exception | None = None
-
-        for attempt in range(self.max_retries + 1):
-            self._enforce_delay()
-            try:
-                response = self._session.post(url, data=data, **kwargs)
-                response.raise_for_status()
-                return response
-            except requests.RequestException as exc:
-                last_exception = exc
-                if attempt < self.max_retries:
-                    backoff = 2 ** attempt + random.uniform(0, 1)
-                    time.sleep(backoff)
-                continue
-
-        raise last_exception or RuntimeError(f"Failed to post {url}")
+        return self._request_with_retries("POST", url, data=data, **kwargs)
