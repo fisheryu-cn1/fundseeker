@@ -234,13 +234,27 @@ jobs:
    - 每日 `auto` 模式建议 1800s；
    - 季度 `full` 模式建议 3600s；
    - 指数权重刷新建议 600s。
+   - 持仓采集 `collect --holdings` 内部已有四层保护：
+     1. HTTP 层 `(connect, read)` timeout（默认 `(10s, 20s)`，来自 `global.holding_request_timeout` 拆分）；
+     2. 单产品 `holding_per_product_timeout_seconds` 硬超时（默认 90s），通过线程池 `future.result(timeout=...)` 兜底，HTTP 库自身 timeout 失效时仍能强制返回；
+     3. 整批 `max_runtime_seconds` 上限（默认 3600s），到点主动 `break` 主循环；
+     4. HTTP 4xx（除 `408/425/429`）**不再重试**：东方财富对没有股票持仓的基金确定性返回 404，重试只会浪费时间与触发限流。
+   - 单只基金请求卡住不会再拖死整个 2996 只基金的批次。
 
-4. **日志详情**：
+4. **卡住后的自愈**：
+   - 所有 collection runner（`run_fund_company`、`run_bank_wm`、`run_holdings`、`run_market_quotes`）启动时都会调用 `_close_stale_collection_logs(session, stale_minutes, job_name=...)`，把超过 `global.stale_log_minutes`（默认 30 分钟）仍处于 `running` 的对应 `collection_log` 标记为 `failed`，并以 `error_message="marked stale by runner startup"` 标注原因。
+   - 由于按 `job_name` 过滤，互不相关的 job 不会相互误杀。
+   - 若手动杀掉某个采集进程，残留 `running` 日志会在同类任务下次启动时被自动清理，无需再手动修复。
+
+5. **新季度自动发现**：
+   - `run_holdings` 的 `skip_existing=True` 默认逻辑已改为：只有当产品的**本地最新季报日期**等于**库内全局最新季报日期**时才跳过；本地季报落后于全局最大值的产品会被重新拉取，从而能在新季度发布后自动补齐，不需要再走 `--no-skip-existing` 全量重跑。
+
+6. **日志详情**：
    - 标准输出报告是摘要；
    - 完整错误信息写入 `collection_log.error_message` 或聚类运行记录的 `params_json`；
    - 可连接数据库查询。
 
-5. **旧入口兼容**：
+7. **旧入口兼容**：
    - `python -m fundseeker.similarity.cli` 已标记 deprecated，会打印警告；
    - 新 cron 和 OpenClaw 任务请使用 `scripts/fundseeker_similarity.py`。
 

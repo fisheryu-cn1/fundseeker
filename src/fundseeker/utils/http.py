@@ -192,9 +192,24 @@ class PoliteHttpClient:
         url: str,
         **kwargs,
     ) -> requests.Response:
-        """Execute a request with polite delay, timeout and retry logic."""
+        """Execute a request with polite delay, timeout and retry logic.
+
+        Retry policy:
+        * Connect/read timeouts (``requests.Timeout``) — retried with
+          exponential backoff + jitter. These typically indicate a flaky
+          network or a stalled server and benefit from retry.
+        * 5xx and 408/429 (``requests.HTTPError`` for those codes) — retried
+          with backoff. These are usually transient.
+        * Other 4xx ``requests.HTTPError`` — raised immediately, no retry.
+          These are deterministic (404 "not found", 403 "forbidden",
+          400 "bad request") and retrying wastes time and rate-limit budget.
+        * Other ``RequestException`` (connection errors etc.) — retried.
+        """
         kwargs.setdefault("timeout", self.timeout)
         last_exception: Exception | None = None
+
+        # Status codes that are worth retrying even though they are 4xx.
+        _RETRYABLE_4XX = {408, 425, 429}
 
         for attempt in range(self.max_retries + 1):
             self._enforce_delay()
@@ -207,6 +222,16 @@ class PoliteHttpClient:
                     raise ValueError(f"Unsupported HTTP method: {method}")
                 response.raise_for_status()
                 return response
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                # Deterministic client error: do not retry.
+                if status is not None and 400 <= status < 500 and status not in _RETRYABLE_4XX:
+                    raise
+                last_exception = exc
+                if attempt < self.max_retries:
+                    backoff = 2 ** attempt + random.uniform(0, 1)
+                    time.sleep(backoff)
+                continue
             except requests.Timeout as exc:
                 # Timeouts (connect/read) are exactly the failures we expect to
                 # see when a server stalls. Always retry them unless this was

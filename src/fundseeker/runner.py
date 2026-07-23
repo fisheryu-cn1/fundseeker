@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.dialects.postgresql import insert
 
 from fundseeker.collectors.bocwm import BOCWMCollector
@@ -103,6 +103,14 @@ def run_fund_company(
     engine = get_engine()
     Session = get_session_maker(engine)
     session = Session()
+
+    # Recover from previously crashed or hung runs of this job type so a
+    # stale "running" row never blocks the next attempt.
+    _close_stale_collection_logs(
+        session,
+        stale_minutes=int(config.get("global", {}).get("stale_log_minutes", 30)),
+        job_name=f"{collector.institution_code.lower()}_product_list",
+    )
 
     start = datetime.now(timezone.utc)
     today = collector.today()
@@ -260,6 +268,13 @@ def run_bank_wm(
     Session = get_session_maker(engine)
     session = Session()
 
+    # Recover from previously crashed or hung runs of this job type.
+    _close_stale_collection_logs(
+        session,
+        stale_minutes=int(config.get("global", {}).get("stale_log_minutes", 30)),
+        job_name=f"{collector.institution_code.lower()}_product_list",
+    )
+
     start = datetime.now(timezone.utc)
     today = collector.today()
 
@@ -411,20 +426,30 @@ def _ensure_security(session, row: dict[str, Any]) -> None:
     session.execute(stmt)
 
 
-def _close_stale_collection_logs(session, stale_minutes: int = 30) -> int:
+def _close_stale_collection_logs(
+    session,
+    stale_minutes: int = 30,
+    job_name: str | None = None,
+) -> int:
     """Mark long-running collection logs as failed to recover from crashes.
 
     When a collector process is killed or hangs without updating the log row,
     subsequent runs would otherwise see the job as already running. This helper
     closes any ``running`` log whose start_time is older than the threshold.
+
+    Pass ``job_name`` to scope the cleanup to one job type (recommended when
+    called from each runner so unrelated in-flight jobs are not affected).
     """
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+    conditions = [
+        CollectionLog.status == "running",
+        CollectionLog.start_time < cutoff,
+    ]
+    if job_name is not None:
+        conditions.append(CollectionLog.job_name == job_name)
     stmt = (
         CollectionLog.__table__.update()
-        .where(
-            CollectionLog.status == "running",
-            CollectionLog.start_time < cutoff,
-        )
+        .where(*conditions)
         .values(
             status="failed",
             end_time=datetime.now(timezone.utc),
@@ -487,7 +512,9 @@ def run_holdings(
         config.get("global", {}).get("stale_log_minutes", 30)
     )
     stale_closed = _close_stale_collection_logs(
-        session, stale_minutes=stale_log_minutes
+        session,
+        stale_minutes=stale_log_minutes,
+        job_name="eastmoney_fund_holding",
     )
     if stale_closed:
         logging.warning("Marked %d stale collection_log rows as failed", stale_closed)
@@ -527,22 +554,33 @@ def run_holdings(
         if institution_code:
             query = query.filter(ProductInfo.institution_code == institution_code)
         if skip_existing:
-            # Only skip products that already have a report for the latest
-            # report date present in the database. Holding reports are
-            # quarterly; once a product has the newest known quarter it should
-            # not be re-fetched until a newer quarter is discovered.
+            # Skip a product only when its latest local report_date already
+            # matches the global latest known report_date. Products whose
+            # newest local report is older than the global max still need to
+            # be fetched, because they may have a newer quarter available on
+            # Eastmoney that we have not yet pulled.
             latest_report_date = (
                 session.query(func.max(HoldingReport.report_date)).scalar()
             )
             if latest_report_date is not None:
-                reported_ids = {
-                    r[0]
-                    for r in session.query(HoldingReport.product_id)
-                    .filter(HoldingReport.report_date == latest_report_date)
-                    .distinct()
-                    .all()
-                }
-                query = query.filter(~ProductInfo.id.in_(reported_ids))
+                # per-product max date subquery; LEFT JOIN so products with no
+                # reports at all are kept (max_date IS NULL).
+                per_product_max_subq = (
+                    session.query(
+                        HoldingReport.product_id.label("pid"),
+                        func.max(HoldingReport.report_date).label("max_date"),
+                    )
+                    .group_by(HoldingReport.product_id)
+                    .subquery()
+                )
+                query = query.outerjoin(
+                    per_product_max_subq, per_product_max_subq.c.pid == ProductInfo.id
+                ).filter(
+                    or_(
+                        per_product_max_subq.c.max_date.is_(None),
+                        per_product_max_subq.c.max_date < latest_report_date,
+                    )
+                )
 
         products = query.all()
 
@@ -800,6 +838,13 @@ def run_market_quotes(
     engine = get_engine()
     Session = get_session_maker(engine)
     session = Session()
+
+    # Recover from previously crashed or hung market-quote runs.
+    _close_stale_collection_logs(
+        session,
+        stale_minutes=int(config.get("global", {}).get("stale_log_minutes", 30)),
+        job_name="market_quote",
+    )
 
     start = datetime.now(timezone.utc)
     expected_symbols = {s["symbol_code"] for s in collector.all_symbols}
