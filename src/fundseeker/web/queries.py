@@ -87,6 +87,13 @@ MARKET_ASSET_CLASSES: list[tuple[str, str]] = [
     ("commodity", "商品"),
 ]
 
+# Default asset_class filter for the market dashboard. Excludes ``stock``
+# rows, which are pulled in by stock-quote backfill and are not meant to
+# appear in the macro market view.
+_DEFAULT_MARKET_ASSET_CLASSES: tuple[str, ...] = tuple(
+    code for code, _ in MARKET_ASSET_CLASSES
+)
+
 
 # ---------------------------------------------------------------------------
 # Dataclasses — ORM-free results that are easy to serialise / template
@@ -1097,17 +1104,32 @@ def list_market_quotes(
     *,
     quote_date: date | None = None,
     region: str | None = None,
+    asset_classes: tuple[str, ...] | list[str] | None = _DEFAULT_MARKET_ASSET_CLASSES,
 ) -> list[MarketQuoteRow]:
     """Return quotes for a given date, or each symbol's latest when date is None.
 
     This avoids the problem where the absolute latest date only has partial
     data (e.g. commodities update before indices on the same calendar day).
+
+    Args:
+        quote_date: Specific calendar date; when ``None``, each symbol's
+            most recent record is returned.
+        region: Filter by ``market_region`` (domestic/us/hk/commodity).
+        asset_classes: Filter by ``asset_class`` (index/commodity). Defaults
+            to the macro-market view which excludes ``stock`` rows. Pass an
+            empty tuple/list to disable the filter.
     """
+    asset_filter = (
+        tuple(asset_classes) if asset_classes is not None else ()
+    )
+
     with _session() as session:
         if quote_date is not None:
             filters = [MarketQuote.quote_date == quote_date]
             if region:
                 filters.append(MarketQuote.market_region == region)
+            if asset_filter:
+                filters.append(MarketQuote.asset_class.in_(asset_filter))
             stmt = (
                 select(*_MARKET_QUOTE_COLS)
                 .where(*filters)
@@ -1134,6 +1156,8 @@ def list_market_quotes(
         )
         if region:
             stmt = stmt.where(MarketQuote.market_region == region)
+        if asset_filter:
+            stmt = stmt.where(MarketQuote.asset_class.in_(asset_filter))
         stmt = stmt.order_by(MarketQuote.market_region, MarketQuote.symbol_code)
         return [_row_to_market_quote(r) for r in session.execute(stmt).all()]
 
@@ -1186,6 +1210,68 @@ def market_quote_history(
         {"date": r[0].isoformat(), "close": float(r[1]) if r[1] is not None else None}
         for r in rows
     ]
+
+
+def market_quote_history_batch(
+    symbol_codes: list[str],
+    days: int = 30,
+    end_date: date | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Batch variant of :func:`market_quote_history` for many symbols.
+
+    Issues a single ``WHERE symbol_code IN (...)`` query instead of one per
+    symbol. Each symbol's series is trimmed to the latest ``days`` records
+    ending at ``end_date`` (inclusive) and returned in ascending order so
+    callers can feed it directly into Chart.js.
+
+    Args:
+        symbol_codes: Symbol codes to fetch. Empty list returns an empty dict.
+        days: Maximum number of records per symbol.
+        end_date: Inclusive upper bound for the quote date. When ``None``,
+            the most recent record in the table is used as the anchor.
+
+    Returns:
+        Mapping from ``symbol_code`` to a list of ``{date, close}`` dicts.
+        Symbols with no matching records map to an empty list.
+    """
+    if not symbol_codes:
+        return {}
+
+    with _session() as session:
+        stmt = (
+            select(
+                MarketQuote.symbol_code,
+                MarketQuote.quote_date,
+                MarketQuote.close_price,
+            )
+            .where(MarketQuote.symbol_code.in_(symbol_codes))
+        )
+        if end_date is not None:
+            stmt = stmt.where(MarketQuote.quote_date <= end_date)
+        # Pull rows in descending order so ``[:days]`` below naturally trims
+        # to the most recent ``days`` records per symbol.
+        stmt = stmt.order_by(
+            MarketQuote.symbol_code,
+            MarketQuote.quote_date.desc(),
+        )
+        rows = list(session.execute(stmt).all())
+
+    by_symbol: dict[str, list[tuple[Any, Any]]] = {code: [] for code in symbol_codes}
+    for sym_code, quote_date, close_price in rows:
+        bucket = by_symbol.get(sym_code)
+        if bucket is None:
+            continue
+        if len(bucket) >= days:
+            continue
+        bucket.append((quote_date, close_price))
+
+    return {
+        code: [
+            {"date": d.isoformat(), "close": float(c) if c is not None else None}
+            for d, c in reversed(items)
+        ]
+        for code, items in by_symbol.items()
+    }
 
 
 def market_summary() -> dict[str, Any]:

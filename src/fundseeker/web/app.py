@@ -546,18 +546,22 @@ def register_routes(app: Flask) -> None:
 
         # Build chart data: one dataset per symbol with close price history.
         # Align the history window with the selected (or current) date so the
-        # sparklines match the table snapshot.
+        # sparklines match the table snapshot. Fetch all 30-day histories in
+        # a single SQL round-trip instead of one query per symbol.
         chart_end = selected_date or date.today()
+        sorted_quotes = sorted(quotes, key=lambda x: (x.market_region, x.symbol_code))
+        history_by_code = queries.market_quote_history_batch(
+            [q.symbol_code for q in sorted_quotes],
+            days=30,
+            end_date=chart_end,
+        )
         chart_datasets: list[dict[str, Any]] = []
-        for q in sorted(quotes, key=lambda x: (x.market_region, x.symbol_code)):
-            history = queries.market_quote_history(
-                q.symbol_code, days=30, end_date=chart_end
-            )
+        for q in sorted_quotes:
             chart_datasets.append({
                 "label": q.symbol_name,
                 "code": q.symbol_code,
                 "region": q.market_region,
-                "data": history,
+                "data": history_by_code.get(q.symbol_code, []),
             })
 
         return render_template(
@@ -567,6 +571,7 @@ def register_routes(app: Flask) -> None:
             selected_date=selected_date,
             chart_datasets=chart_datasets,
             regions=queries.MARKET_REGIONS,
+            asset_classes=queries.MARKET_ASSET_CLASSES,
         )
 
     # ---------------------------------------------------------------- api

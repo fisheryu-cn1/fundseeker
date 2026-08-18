@@ -39,6 +39,8 @@ class EastmoneyFundHoldingCollector(HoldingCollector):
         # generic institutional websites. Keep a small polite delay.
         self.http.min_delay = 0.5
         self.http.max_delay = 1.5
+        # The FundArchivesDatas API returns 404 unless a fundf10 referer is sent.
+        self.http._session.headers.update({"Referer": self.source_url})
 
     def available_report_dates(
         self, product_code: str, **kwargs: Any

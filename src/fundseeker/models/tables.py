@@ -348,6 +348,17 @@ class MarketQuote(Base):
         Index("ix_market_quote_date", "quote_date"),
         Index("ix_market_quote_region", "market_region"),
         Index("ix_market_quote_asset_class", "asset_class"),
+        # Composite index for the /market dashboard batch query, which filters
+        # by asset_class + symbol_code IN (...) + quote_date <= end_date and
+        # orders by quote_date DESC. Created alongside the model so fresh
+        # databases pick it up automatically; existing databases apply it
+        # via scripts/migrate_market_quote_index.py.
+        Index(
+            "ix_market_quote_asset_class_date_symbol",
+            "asset_class",
+            "quote_date",
+            "symbol_code",
+        ),
     )
 
 

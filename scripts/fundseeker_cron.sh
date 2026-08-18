@@ -59,29 +59,48 @@ if [ "$is_holiday" = "true" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 2b: 工作日分支 — 跑 collect（fast path：只跑 funds + bank-wm）
-#   当前东方财富 holdings API 不可用，今天 4 次跑都卡死，跳过 holdings。
-#   如果 ENABLE_HOLDINGS=1，则跑 --all（30 分钟超时，含 holdings）。
+# Step 2b: 工作日分支 — 跑 collect
+#   产品和净值每日采集（funds + bank-wm + market-quotes）。
+#   持仓数据按季度披露，只在季度首月（1/4/7/10）22 日及以后跑 --all。
+#   可通过 ENABLE_HOLDINGS=0 临时跳过持仓，ENABLE_HOLDINGS=1 强制跑持仓。
 # ---------------------------------------------------------------------------
+MONTH=$(TZ=Asia/Shanghai date +%m)
+DAY=$(TZ=Asia/Shanghai date +%d)
+case "$MONTH" in
+  01|04|07|10) IS_HOLDING_MONTH=true ;;
+  *) IS_HOLDING_MONTH=false ;;
+esac
+if [ "$IS_HOLDING_MONTH" = "true" ] && [ "$DAY" -ge 22 ]; then
+  IN_HOLDING_WINDOW=true
+else
+  IN_HOLDING_WINDOW=false
+fi
+
 ALREADY_OUTPUT=1  # 标记脚本输出过内容，防止 trap 重复告警
-if [ "${ENABLE_HOLDINGS:-0}" = "1" ]; then
-  collect_output=$(PYTHONPATH=src timeout 1800 python scripts/fundseeker_cli.py collect --all 2>&1)
+if [ "${ENABLE_HOLDINGS:-}" = "1" ] || { [ "${ENABLE_HOLDINGS:-}" != "0" ] && [ "$IN_HOLDING_WINDOW" = "true" ]; }; then
+  # 5400s = 90 min；持仓窗口期 642 只基金 × 90s per-product 最坏 ~16h，外层 timeout 设大让 collect 自然跑完
+  # runner 内置 max_runtime_seconds=3600 + 内部 SIGTERM cleanup；cron payload 已设 7200s
+  # --all 已包含 --market-quotes（见 fundseeker_cli.py:184）
+  collect_output=$(PYTHONPATH=src timeout 5400 python scripts/fundseeker_cli.py collect --all 2>&1)
   collect_ec=$?
   if [ "$collect_ec" -eq 124 ]; then
     collect_output="${collect_output}
-⚠️ collect --all 超时（1800s）被 SIGTERM，已写入部分结果"
+⚠️ collect --all 超时（5400s）被 SIGTERM，已写入部分结果"
   fi
 else
-  collect_output=$(PYTHONPATH=src timeout 600 python scripts/fundseeker_cli.py collect --funds --bank-wm 2>&1)
+  # 非持仓窗口：funds + bank-wm + market-quotes 三件套每日都跑。
+  # market-quotes 实测 8~120s，加上 buffer；funds+bank-wm 实测 < 600s；总 timeout 780s。
+  # market-quotes 失败 → collect exit 1（cron 仍 announce 报告，不算脚本错）。
+  collect_output=$(PYTHONPATH=src timeout 780 python scripts/fundseeker_cli.py collect --funds --bank-wm --market-quotes 2>&1)
   collect_ec=$?
   if [ "$collect_ec" -eq 124 ]; then
     collect_output="${collect_output}
-⚠️ collect 超时（600s）被 SIGTERM，已写入部分结果"
+⚠️ collect 超时（780s）被 SIGTERM，已写入部分结果"
   fi
   if [ "$collect_ec" -eq 0 ]; then
     collect_output="${collect_output}
 
-ℹ️ 本次 fast path 跳过了 holdings（东方财富 API 当前不可用）"
+ℹ️ 本次未进入持仓采集窗口（季度首月 22 日及以后才采集持仓；ENABLE_HOLDINGS 未强制开启）"
   fi
 fi
 

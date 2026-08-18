@@ -20,7 +20,7 @@ institutions:
     website: https://www.99fund.com
     product_list_url: https://www.99fund.com/main/products/jijinhb/index.shtml
     detail_source: eastmoney
-    enabled: false
+    enabled: true
     request:
       min_delay_seconds: 5.0
       max_delay_seconds: 10.0

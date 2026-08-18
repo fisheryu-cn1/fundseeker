@@ -40,8 +40,11 @@ _EASTMONEY_KLINE_FIELDS = [
     "turnover",
 ]
 
-# Sina international futures / commodity quote endpoint.
+# Sina real-time quote endpoint (indices + futures).
 _SINA_HQ_URL = "https://hq.sinajs.cn/list"
+
+# Maximum number of Sina symbols per HTTP request.
+_SINA_BATCH_SIZE = 50
 
 INDEX_SYMBOLS = [
     {
@@ -50,6 +53,7 @@ INDEX_SYMBOLS = [
         "market_region": "domestic",
         "asset_class": "index",
         "secid": "1.000001",
+        "sina_symbol": "sh000001",
         "currency": "CNY",
         "volume_unit": "lot",
     },
@@ -59,6 +63,7 @@ INDEX_SYMBOLS = [
         "market_region": "domestic",
         "asset_class": "index",
         "secid": "0.399001",
+        "sina_symbol": "sz399001",
         "currency": "CNY",
         "volume_unit": "lot",
     },
@@ -68,6 +73,7 @@ INDEX_SYMBOLS = [
         "market_region": "domestic",
         "asset_class": "index",
         "secid": "0.399006",
+        "sina_symbol": "sz399006",
         "currency": "CNY",
         "volume_unit": "lot",
     },
@@ -77,6 +83,7 @@ INDEX_SYMBOLS = [
         "market_region": "domestic",
         "asset_class": "index",
         "secid": "1.000300",
+        "sina_symbol": "sh000300",
         "currency": "CNY",
         "volume_unit": "lot",
     },
@@ -86,6 +93,7 @@ INDEX_SYMBOLS = [
         "market_region": "domestic",
         "asset_class": "index",
         "secid": "1.000016",
+        "sina_symbol": "sh000016",
         "currency": "CNY",
         "volume_unit": "lot",
     },
@@ -95,6 +103,7 @@ INDEX_SYMBOLS = [
         "market_region": "domestic",
         "asset_class": "index",
         "secid": "1.000905",
+        "sina_symbol": "sh000905",
         "currency": "CNY",
         "volume_unit": "lot",
     },
@@ -104,6 +113,7 @@ INDEX_SYMBOLS = [
         "market_region": "domestic",
         "asset_class": "index",
         "secid": "1.000852",
+        "sina_symbol": "sh000852",
         "currency": "CNY",
         "volume_unit": "lot",
     },
@@ -113,6 +123,7 @@ INDEX_SYMBOLS = [
         "market_region": "hk",
         "asset_class": "index",
         "secid": "100.HSI",
+        "sina_symbol": "rt_hkHSI",
         "currency": "HKD",
         "volume_unit": "share",
     },
@@ -122,6 +133,7 @@ INDEX_SYMBOLS = [
         "market_region": "hk",
         "asset_class": "index",
         "secid": "100.HSCEI",
+        "sina_symbol": "rt_hkHSCEI",
         "currency": "HKD",
         "volume_unit": "share",
     },
@@ -131,6 +143,7 @@ INDEX_SYMBOLS = [
         "market_region": "us",
         "asset_class": "index",
         "secid": "100.DJIA",
+        "sina_symbol": "gb_dji",
         "currency": "USD",
         "volume_unit": "share",
     },
@@ -140,6 +153,7 @@ INDEX_SYMBOLS = [
         "market_region": "us",
         "asset_class": "index",
         "secid": "100.NDX",
+        "sina_symbol": "gb_ixic",
         "currency": "USD",
         "volume_unit": "share",
     },
@@ -149,6 +163,7 @@ INDEX_SYMBOLS = [
         "market_region": "us",
         "asset_class": "index",
         "secid": "100.SPX",
+        "sina_symbol": "gb_inx",
         "currency": "USD",
         "volume_unit": "share",
     },
@@ -160,7 +175,7 @@ COMMODITY_SYMBOLS = [
         "symbol_name": "布伦特原油",
         "market_region": "commodity",
         "asset_class": "commodity",
-        "sina_symbol": "hf_OIL",
+        "sina_symbol": "hf_CL",
         "currency": "USD",
         "volume_unit": "contract",
     },
@@ -186,6 +201,17 @@ def _to_decimal(value: str | None) -> Decimal | None:
     try:
         return Decimal(value)
     except InvalidOperation:
+        return None
+
+
+def _to_int(value: str | None) -> int | None:
+    """Convert a string to int, returning None on empty/invalid input."""
+    dec = _to_decimal(value)
+    if dec is None:
+        return None
+    try:
+        return int(dec)
+    except Exception:
         return None
 
 
@@ -228,10 +254,146 @@ def _parse_eastmoney_kline(kline: str) -> dict[str, Any]:
     }
 
 
+def _find_sina_date_index(parts: list[str]) -> int | None:
+    """Locate the standalone date token in a Sina quote CSV."""
+    for idx, part in enumerate(parts):
+        if re.fullmatch(r"\d{4}[-/]\d{2}[-/]\d{2}", part.strip()):
+            return idx
+    return None
+
+
+def _parse_sina_datetime_token(token: str) -> date | None:
+    """Extract a date from a token like '2026-07-27 15:30:36'."""
+    token = token.strip()
+    match = re.match(r"(\d{4}-\d{2}-\d{2})\s+\d{2}:\d{2}:\d{2}", token)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_sina_index_line(
+    line: str, symbol_cfg: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Parse one Sina A-share/HK/US index quote line.
+
+    A-share format (sh/sz prefix):
+        name,open,prev_close,current,high,low,bid,ask,volume,amount,...,date,time,...
+    HK format (rt_hk prefix):
+        code,name,open,prev_close,high,low,current,...,date,time,...
+    US index format (gb_ prefix):
+        name,current,change_pct,date_time,change_amount,open,high,low,...,volume,...,prev_close,...
+    """
+    match = re.search(r'"([^"]*)"', line)
+    if not match:
+        return None
+    body = match.group(1)
+    if not body:
+        return None
+
+    parts = body.split(",")
+    if len(parts) < 6:
+        return None
+
+    sina_symbol = symbol_cfg["sina_symbol"]
+
+    if sina_symbol.startswith("gb_"):
+        # US index: needs at least open/high/low/prev_close positions.
+        if len(parts) < 26:
+            return None
+        quote_date = _parse_sina_datetime_token(parts[3]) or date.today()
+        close_price = _to_decimal(parts[1])
+        change_pct = _to_decimal(parts[2])
+        change_amount = _to_decimal(parts[4])
+        open_price = _to_decimal(parts[5])
+        high_price = _to_decimal(parts[6])
+        low_price = _to_decimal(parts[7])
+        volume = _to_int(parts[10])
+        prev_close = _to_decimal(parts[25])
+
+        if change_amount is None and change_pct is not None and prev_close:
+            change_amount = prev_close * change_pct / Decimal("100")
+        if change_pct is None and change_amount is not None and prev_close:
+            change_pct = change_amount / prev_close * Decimal("100")
+
+        return {
+            "quote_date": quote_date,
+            "open_price": open_price,
+            "high_price": high_price,
+            "low_price": low_price,
+            "close_price": close_price,
+            "prev_close": prev_close,
+            "change_amount": change_amount,
+            "change_pct": change_pct,
+            "volume": volume,
+            "amount": None,
+            "source_code": sina_symbol,
+            "data_source": f"{_SINA_HQ_URL}={sina_symbol}",
+        }
+
+    date_idx = _find_sina_date_index(parts)
+    if date_idx is None:
+        return None
+
+    date_str = parts[date_idx].strip().replace("/", "-")
+    try:
+        quote_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        quote_date = date.today()
+
+    if sina_symbol.startswith("rt_hk"):
+        # HK: code, name, open, prev_close, high, low, current, ...
+        if len(parts) < 7:
+            return None
+        open_price = _to_decimal(parts[2])
+        prev_close = _to_decimal(parts[3])
+        high_price = _to_decimal(parts[4])
+        low_price = _to_decimal(parts[5])
+        close_price = _to_decimal(parts[6])
+        volume = None
+        amount = None
+    else:
+        # A-share: name, open, prev_close, current, high, low, bid, ask, volume, amount, ...
+        if len(parts) < 10:
+            return None
+        open_price = _to_decimal(parts[1])
+        prev_close = _to_decimal(parts[2])
+        close_price = _to_decimal(parts[3])
+        high_price = _to_decimal(parts[4])
+        low_price = _to_decimal(parts[5])
+        volume = _to_int(parts[8])
+        amount = _to_decimal(parts[9])
+
+    change_amount = None
+    if close_price is not None and prev_close is not None:
+        change_amount = close_price - prev_close
+
+    change_pct = None
+    if change_amount is not None and prev_close:
+        change_pct = (change_amount / prev_close) * Decimal("100")
+
+    return {
+        "quote_date": quote_date,
+        "open_price": open_price,
+        "high_price": high_price,
+        "low_price": low_price,
+        "close_price": close_price,
+        "prev_close": prev_close,
+        "change_amount": change_amount,
+        "change_pct": change_pct,
+        "volume": volume,
+        "amount": amount,
+        "source_code": sina_symbol,
+        "data_source": f"{_SINA_HQ_URL}={sina_symbol}",
+    }
+
+
 def _parse_sina_commodity_line(
     line: str, symbol_cfg: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Parse one Sina commodity quote line (e.g. var hq_str_hf_OIL=...)."""
+    """Parse one Sina commodity quote line (e.g. var hq_str_hf_CL=...)."""
     match = re.search(r'"([^"]*)"', line)
     if not match:
         return None
@@ -248,11 +410,7 @@ def _parse_sina_commodity_line(
     # 6 quote_time, 7 prev_settlement, 8 open, ...,
     # N-2 date (YYYY-MM-DD), N-1 name
     # Some fields in the middle vary, so we locate the date field explicitly.
-    date_idx = None
-    for idx, part in enumerate(parts):
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", part.strip()):
-            date_idx = idx
-            break
+    date_idx = _find_sina_date_index(parts)
     if date_idx is None:
         return None
 
@@ -271,7 +429,11 @@ def _parse_sina_commodity_line(
     if change_pct is None and change_amount is not None and prev_close:
         change_pct = (change_amount / prev_close) * Decimal("100")
 
-    quote_date = datetime.strptime(parts[date_idx].strip(), "%Y-%m-%d").date()
+    date_str = parts[date_idx].strip().replace("/", "-")
+    try:
+        quote_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        quote_date = date.today()
 
     return {
         "quote_date": quote_date,
@@ -286,6 +448,42 @@ def _parse_sina_commodity_line(
         "amount": None,
         "source_code": symbol_cfg["sina_symbol"],
         "data_source": f"{_SINA_HQ_URL}={symbol_cfg['sina_symbol']}",
+    }
+
+
+def _parse_sina_quote_line(
+    line: str, symbol_cfg: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Dispatch Sina quote parsing by symbol type."""
+    sina_symbol = symbol_cfg.get("sina_symbol", "")
+    if sina_symbol.startswith("hf_"):
+        return _parse_sina_commodity_line(line, symbol_cfg)
+    return _parse_sina_index_line(line, symbol_cfg)
+
+
+def _quote_dict_from_parsed(
+    parsed: dict[str, Any], cfg: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a database-ready quote dict from parsed Sina/Eastmoney data."""
+    return {
+        "quote_date": parsed["quote_date"],
+        "symbol_code": cfg["symbol_code"],
+        "symbol_name": cfg["symbol_name"],
+        "market_region": cfg["market_region"],
+        "asset_class": cfg["asset_class"],
+        "open_price": parsed["open_price"],
+        "high_price": parsed["high_price"],
+        "low_price": parsed["low_price"],
+        "close_price": parsed["close_price"],
+        "prev_close": parsed["prev_close"],
+        "change_amount": parsed["change_amount"],
+        "change_pct": parsed["change_pct"],
+        "volume": parsed["volume"],
+        "volume_unit": cfg["volume_unit"],
+        "amount": parsed["amount"],
+        "currency": cfg["currency"],
+        "data_source": parsed["data_source"],
+        "source_code": parsed["source_code"],
     }
 
 
@@ -328,127 +526,220 @@ class MarketQuoteCollector:
         data = payload.get("data") or {}
         return data.get("klines", [])
 
-    def _fetch_sina_commodities(self) -> str:
-        """Fetch Sina real-time quotes for all configured commodities."""
-        symbols = ",".join(s["sina_symbol"] for s in COMMODITY_SYMBOLS)
-        url = f"{_SINA_HQ_URL}={symbols}"
-        response = self.http.get(url, headers={"Referer": "https://finance.sina.com.cn"})
-        # Sina returns GB2312 encoded JavaScript text.
-        response.encoding = "gb2312"
-        return response.text
+    def _fetch_sina_quotes(self, sina_symbols: list[str]) -> str:
+        """Fetch Sina real-time quotes for given symbols in batches of 50."""
+        chunks = [
+            sina_symbols[i : i + _SINA_BATCH_SIZE]
+            for i in range(0, len(sina_symbols), _SINA_BATCH_SIZE)
+        ]
+        texts: list[str] = []
+        for chunk in chunks:
+            url = f"{_SINA_HQ_URL}={','.join(chunk)}"
+            response = self.http.get(
+                url,
+                headers={"Referer": "https://finance.sina.com.cn"},
+            )
+            # GB18030 is a superset of GBK/GB2312 and handles Sina's
+            # occasional legacy characters without raising.
+            response.encoding = "GB18030"
+            texts.append(response.text)
+        return "\n".join(texts)
 
-    def _collect_indices(
-        self, target_date: date | None = None
+    def _collect_single_index_eastmoney(
+        self, cfg: dict[str, Any], target_date: date | None = None
     ) -> list[dict[str, Any]]:
-        """Collect index quotes from Eastmoney.
+        """Collect one index from Eastmoney K-line API."""
+        if target_date is not None:
+            start_date = end_date = target_date
+        else:
+            # Use a 60-day look-back window so a single missed cron run
+            # doesn't leave the index series with a permanent gap.
+            end_date = date.today()
+            start_date = end_date - timedelta(days=60)
 
-        Each Eastmoney kline request returns the full requested window. We
-        iterate over every kline in that window and emit one quote per trading
-        day, so a single cron run naturally backfills any gap left by previous
-        missed runs. When ``target_date`` is given, only that exact date is
-        emitted (single-day mode).
-        """
+        klines = self._fetch_eastmoney_klines(cfg["secid"], start_date, end_date)
+        if not klines:
+            return []
+
         results: list[dict[str, Any]] = []
-        for cfg in INDEX_SYMBOLS:
-            if target_date is not None:
-                start_date = end_date = target_date
-            else:
-                # Use a 60-day look-back window so a single missed cron run
-                # doesn't leave the index series with a permanent gap.
-                end_date = date.today()
-                start_date = end_date - timedelta(days=60)
-
-            klines = self._fetch_eastmoney_klines(cfg["secid"], start_date, end_date)
-            if not klines:
+        for kline in klines:
+            # Skip rows whose date prefix lies outside the requested
+            # window (Eastmoney sometimes returns a few adjacent days).
+            date_prefix = kline.split(",", 1)[0]
+            try:
+                row_date = datetime.strptime(date_prefix, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if target_date is not None and row_date != target_date:
+                continue
+            if row_date < start_date or row_date > end_date:
                 continue
 
-            for kline in klines:
-                # Skip rows whose date prefix lies outside the requested
-                # window (Eastmoney sometimes returns a few adjacent days).
-                date_prefix = kline.split(",", 1)[0]
-                try:
-                    row_date = datetime.strptime(date_prefix, "%Y-%m-%d").date()
-                except ValueError:
-                    continue
-                if target_date is not None and row_date != target_date:
-                    continue
-                if row_date < start_date or row_date > end_date:
-                    continue
-
-                parsed = _parse_eastmoney_kline(kline)
-                results.append(
+            parsed = _parse_eastmoney_kline(kline)
+            results.append(
+                _quote_dict_from_parsed(
                     {
-                        "quote_date": parsed["quote_date"],
-                        "symbol_code": cfg["symbol_code"],
-                        "symbol_name": cfg["symbol_name"],
-                        "market_region": cfg["market_region"],
-                        "asset_class": cfg["asset_class"],
-                        "open_price": parsed["open_price"],
-                        "high_price": parsed["high_price"],
-                        "low_price": parsed["low_price"],
-                        "close_price": parsed["close_price"],
-                        "prev_close": parsed["prev_close"],
-                        "change_amount": parsed["change_amount"],
-                        "change_pct": parsed["change_pct"],
-                        "volume": parsed["volume"],
-                        "volume_unit": cfg["volume_unit"],
-                        "amount": parsed["amount"],
-                        "currency": cfg["currency"],
+                        **parsed,
                         "data_source": _EASTMONEY_KLINE_URL,
                         "source_code": cfg["secid"],
-                    }
+                    },
+                    cfg,
                 )
+            )
         return results
 
-    def _collect_commodities(
-        self, target_date: date | None = None
-    ) -> list[dict[str, Any]]:
-        """Collect commodity quotes from Sina real-time endpoint."""
-        text = self._fetch_sina_commodities()
-        cfg_by_symbol = {s["sina_symbol"]: s for s in COMMODITY_SYMBOLS}
+    def _collect_from_sina(
+        self, cfgs: list[dict[str, Any]], target_date: date | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        """Collect real-time quotes from Sina for the given symbol configs."""
+        sina_symbols = [cfg["sina_symbol"] for cfg in cfgs]
+        text = self._fetch_sina_quotes(sina_symbols)
+        cfg_by_sina = {cfg["sina_symbol"]: cfg for cfg in cfgs}
+
         results: list[dict[str, Any]] = []
+        status: dict[str, dict[str, Any]] = {}
+
         for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue
-            # line looks like: var hq_str_hf_OIL="...";
+            # line looks like: var hq_str_sh000001="...";
             symbol_match = re.match(r"var\s+hq_str_(\w+)\s*=", line)
             if not symbol_match:
                 continue
             sina_symbol = symbol_match.group(1)
-            cfg = cfg_by_symbol.get(sina_symbol)
+            cfg = cfg_by_sina.get(sina_symbol)
             if cfg is None:
                 continue
-            parsed = _parse_sina_commodity_line(line, cfg)
+
+            parsed = _parse_sina_quote_line(line, cfg)
             if parsed is None:
                 continue
             if target_date is not None and parsed["quote_date"] != target_date:
                 # Sina only provides the current trading day; skip if it does
                 # not match the requested historical date.
                 continue
-            results.append(
-                {
-                    "quote_date": parsed["quote_date"],
-                    "symbol_code": cfg["symbol_code"],
-                    "symbol_name": cfg["symbol_name"],
-                    "market_region": cfg["market_region"],
-                    "asset_class": cfg["asset_class"],
-                    "open_price": parsed["open_price"],
-                    "high_price": parsed["high_price"],
-                    "low_price": parsed["low_price"],
-                    "close_price": parsed["close_price"],
-                    "prev_close": parsed["prev_close"],
-                    "change_amount": parsed["change_amount"],
-                    "change_pct": parsed["change_pct"],
-                    "volume": parsed["volume"],
-                    "volume_unit": cfg["volume_unit"],
-                    "amount": parsed["amount"],
-                    "currency": cfg["currency"],
-                    "data_source": parsed["data_source"],
-                    "source_code": parsed["source_code"],
+
+            results.append(_quote_dict_from_parsed(parsed, cfg))
+            status[cfg["symbol_code"]] = {
+                "status": "success",
+                "source": _SINA_HQ_URL,
+                "quote_date_min": parsed["quote_date"].isoformat(),
+                "quote_date_max": parsed["quote_date"].isoformat(),
+            }
+
+        # Mark symbols that did not return usable data as failed.
+        for cfg in cfgs:
+            symbol_code = cfg["symbol_code"]
+            if symbol_code not in status:
+                status[symbol_code] = {
+                    "status": "failed",
+                    "source": None,
+                    "quote_date_min": None,
+                    "quote_date_max": None,
                 }
+
+        return results, status
+
+    def _collect_indices(
+        self, target_date: date | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        """Collect index quotes from Eastmoney, falling back to Sina realtime.
+
+        Eastmoney is the primary source because it provides historical daily
+        bars. When Eastmoney fails (SSL/connection/timeout/empty response),
+        the configured ``sina_symbol`` is used to fetch today's real-time quote
+        from Sina as a fallback so the cron run never leaves a gap.
+        """
+        results: list[dict[str, Any]] = []
+        status: dict[str, dict[str, Any]] = {}
+
+        # Phase 1: Eastmoney primary.
+        eastmoney_failed: list[dict[str, Any]] = []
+        for cfg in INDEX_SYMBOLS:
+            symbol_code = cfg["symbol_code"]
+            try:
+                symbol_results = self._collect_single_index_eastmoney(
+                    cfg, target_date
+                )
+                if symbol_results:
+                    results.extend(symbol_results)
+                    quote_dates = [r["quote_date"] for r in symbol_results]
+                    status[symbol_code] = {
+                        "status": "success",
+                        "source": _EASTMONEY_KLINE_URL,
+                        "quote_date_min": min(quote_dates).isoformat(),
+                        "quote_date_max": max(quote_dates).isoformat(),
+                    }
+                else:
+                    eastmoney_failed.append(cfg)
+                    status[symbol_code] = {
+                        "status": "failed",
+                        "source": None,
+                        "quote_date_min": None,
+                        "quote_date_max": None,
+                    }
+            except Exception:
+                eastmoney_failed.append(cfg)
+                status[symbol_code] = {
+                    "status": "failed",
+                    "source": None,
+                    "quote_date_min": None,
+                    "quote_date_max": None,
+                }
+
+        # Phase 2: Sina fallback for symbols that failed on Eastmoney and have
+        # a configured sina_symbol.
+        sina_retry = [cfg for cfg in eastmoney_failed if cfg.get("sina_symbol")]
+        if sina_retry:
+            sina_results, sina_status = self._collect_from_sina(
+                sina_retry, target_date
             )
-        return results
+            results.extend(sina_results)
+            for symbol_code, st in sina_status.items():
+                if st["status"] == "success":
+                    status[symbol_code] = st
+
+        return results, status
+
+    def _collect_commodities(
+        self, target_date: date | None = None
+    ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        """Collect commodity quotes from Sina real-time endpoint."""
+        results, status = self._collect_from_sina(COMMODITY_SYMBOLS, target_date)
+        return results, status
+
+    def _print_collector_summary(
+        self, status: dict[str, dict[str, Any]]
+    ) -> None:
+        """Print per-symbol collection source and status."""
+        print("\n[market_quote] per-symbol collection summary")
+        total = len(status)
+        success = sum(1 for s in status.values() if s["status"] == "success")
+        failed = total - success
+        print(f"  total symbols : {total}")
+        print(f"  success       : {success}")
+        print(f"  failed        : {failed}")
+
+        # Group by source so Eastmoney vs Sina is obvious.
+        by_source: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        for symbol_code, st in sorted(status.items()):
+            source = st.get("source") or "failed"
+            by_source.setdefault(source, []).append((symbol_code, st))
+
+        for source, items in by_source.items():
+            print(f"\n  source: {source}")
+            for symbol_code, st in items:
+                date_min = st.get("quote_date_min")
+                date_max = st.get("quote_date_max")
+                if date_min and date_max:
+                    if date_min == date_max:
+                        date_info = f"date={date_min}"
+                    else:
+                        date_info = f"dates={date_min}~{date_max}"
+                else:
+                    date_info = "no date"
+                print(f"    {symbol_code}: {st['status']} ({date_info})")
 
     def collect(
         self, target_date: date | str | None = None
@@ -459,7 +750,7 @@ class MarketQuoteCollector:
             target_date: Optional date (``date`` or ``YYYY-MM-DD`` string).
                 If provided, only the specified trading day is collected.
                 Indices support historical dates via Eastmoney; commodities
-                only support the current trading day offered by Sina.
+                and Sina fallback only support the current trading day.
 
         Returns:
             A list of quote dicts ready for database insertion.
@@ -472,6 +763,15 @@ class MarketQuoteCollector:
             parsed_date = datetime.strptime(str(target_date), "%Y-%m-%d").date()
 
         results: list[dict[str, Any]] = []
-        results.extend(self._collect_indices(parsed_date))
-        results.extend(self._collect_commodities(parsed_date))
+        status: dict[str, dict[str, Any]] = {}
+
+        index_results, index_status = self._collect_indices(parsed_date)
+        results.extend(index_results)
+        status.update(index_status)
+
+        commodity_results, commodity_status = self._collect_commodities(parsed_date)
+        results.extend(commodity_results)
+        status.update(commodity_status)
+
+        self._print_collector_summary(status)
         return results
