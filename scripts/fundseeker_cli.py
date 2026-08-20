@@ -218,7 +218,7 @@ def main() -> int:
     # Clamp user-supplied holding years (P2, review 2026-08-20 fs 分析 §3.1):
     # one product × N years multiplies HTTP requests; without a cap a typo
     # (e.g. --holding-years 1000) can hammer upstream sites.
-    if getattr(args, "holding_years", None):
+    if getattr(args, "holding_years", None) is not None:
         args.holding_years = max(1, min(int(args.holding_years), 10))
 
     if args.command == "init-db":
