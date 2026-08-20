@@ -212,7 +212,11 @@ class PoliteHttpClient:
         _RETRYABLE_4XX = {408, 425, 429}
 
         for attempt in range(self.max_retries + 1):
-            self._enforce_delay()
+            # Polite delay only before the first attempt: retries already pay
+            # exponential backoff below, so delaying here too would double the
+            # wait on every failed request (P2, review 2026-08-20 fs 分析 §2.1).
+            if attempt == 0:
+                self._enforce_delay()
             try:
                 if method == "GET":
                     response = self._session.get(url, **kwargs)
