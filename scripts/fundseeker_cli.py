@@ -110,7 +110,7 @@ def parse_args() -> argparse.Namespace:
         "--holding-years",
         type=int,
         default=1,
-        help="Number of historical years for holdings (default: 1)",
+        help="Number of historical years for holdings (default: 1, max 10)",
     )
     collect_parser.add_argument(
         "--no-skip-existing",
@@ -211,7 +211,15 @@ def cmd_collect(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+
+
     args = parse_args()
+
+    # Clamp user-supplied holding years (P2, review 2026-08-20 fs 分析 §3.1):
+    # one product × N years multiplies HTTP requests; without a cap a typo
+    # (e.g. --holding-years 1000) can hammer upstream sites.
+    if getattr(args, "holding_years", None) is not None:
+        args.holding_years = max(1, min(int(args.holding_years), 10))
 
     if args.command == "init-db":
         return cmd_init_db()

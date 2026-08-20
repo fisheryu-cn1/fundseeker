@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
         "--years",
         type=int,
         default=1,
-        help="Number of historical years to fetch for each product.",
+        help="Number of historical years to fetch for each product (max 10).",
     )
     parser.add_argument(
         "--no-skip-existing",
@@ -63,7 +63,7 @@ def main() -> int:
 
     result = run_holdings(
         institution_code=args.code,
-        years=args.years,
+        years=max(1, min(int(args.years), 10)),  # clamp (review 2026-08-20)
         skip_existing=not args.no_skip_existing,
     )
     print(
